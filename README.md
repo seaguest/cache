@@ -28,7 +28,7 @@ func getVal(id uint32, db *gorm.DB) (uint32, error) {
 	})
 	if err != nil {
 		logger.Error(err)
-		return uint32(0), err
+		return 0, err
 	}
 	return v, nil
 }
