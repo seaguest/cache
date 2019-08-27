@@ -111,7 +111,10 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, lazy bool, f Loa
 	// update memcache
 	it := NewItem(o, ttl, lazy)
 
-	c.set(key, it)
+	err = c.set(key, it)
+	if err != nil {
+		return err
+	}
 
 	c.mem.Set(key, it)
 	return nil
