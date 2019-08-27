@@ -34,7 +34,7 @@ func (c *RedisCache) getMutex(key string) *sync.RWMutex {
 	return mux
 }
 
-// 从redis读取item
+// read item from redis
 func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
 	mux := c.getMutex(key)
 	mux.RLock()
@@ -42,6 +42,7 @@ func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
 		mux.RUnlock()
 	}()
 
+	// check if item is up-to-date in mem, return directly
 	if v, valid := c.mem.UpToDate(key); valid {
 		return v, true
 	}
@@ -76,14 +77,14 @@ func (c *RedisCache) Set(key string, it *Item) {
 	c.set(key, it)
 }
 
-// 写入到redis
 func (c *RedisCache) set(key string, it *Item) error {
 	ttl := (it.Expiration - time.Now().UnixNano()) / int64(time.Second)
 	bs, _ := json.Marshal(it)
 	return RedisSetString(key, string(bs), int(ttl), c.pool)
 }
 
-// 从db加载到redis，mem
+// load redis with load function
+// when sync is true, obj must be set in sync mode.
 func (c *RedisCache) load(key string, obj interface{}, ttl int, lazy bool, f LoadFunc, sync bool) error {
 	mux := c.getMutex(key)
 	mux.Lock()
@@ -103,7 +104,6 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, lazy bool, f Loa
 		return err
 	}
 
-	// 进当同步模式下，需要更新obj
 	if sync {
 		clone(o, obj)
 	}
@@ -111,10 +111,8 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, lazy bool, f Loa
 	// update memcache
 	it := NewItem(o, ttl, lazy)
 
-	// 更新redis
 	c.set(key, it)
 
-	// 更新mem
 	c.mem.Set(key, it)
 	return nil
 }

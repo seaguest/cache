@@ -1,27 +1,39 @@
 # cache
-A distributed two-level cache (memory + redis) with LoadFunc library for Go.
+A distributed two-level cache (memory + redis) with loader function library for Go.
 
-Mem cache is build on top of sync.Map.
+Mem cache is built on top of sync.Map.
 
-When cache.Delete(key) is called, redis will publish to all cache nodes, and each node will delete the key from mem and redis.
+When cache.Delete(key) is called, redis will publish to all cache nodes, then an delete 
+ action (mem+redis) is performed by each cache node.
 
 Usage:
 
 
 ``` 
-func getXXX(id uint32, db *gorm.DB) (*XXX, error) {
+package main
+
+import "github.com/seaguest/cache"
+
+func getVal(id uint32, db *gorm.DB) (uint32, error) {
 	key := fmt.Sprint(id)
-	var v XXX
-	err := cache.GetCacheObject(key, &v, 60, func() (interface{}, error) {
-		var err error
-		// DB find
-		return *XXX, nil
+	var v uint32
+	err := cache.GetObject(key, &v, 60, func() (interface{}, error) {
+		// DB query
+		var res uint32 = 100
+		return res, nil
 	})
 	if err != nil {
 		logger.Error(err)
-		return nil, err
+		return uint32(0), err
 	}
-	return &v, nil
+	return v, nil
+}
+
+func main() {
+	cache.Init("127.0.0.1:379", "", true, 200)
+
+	v, e := getVal(100, nil)
+	logger.Error(v, e)
 }
 
 ```

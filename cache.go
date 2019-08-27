@@ -46,7 +46,7 @@ func New(redisAddr, redisPassword string, lazy bool, maxConnection int) *Cache {
 }
 
 // load mem memcache from redis
-func (c *Cache) refreshMem(key string, copy interface{}, ttl int, f LoadFunc) {
+func (c *Cache) updateMem(key string, copy interface{}, ttl int, f LoadFunc) {
 	it, ok := c.rds.Get(key, copy)
 	// if key not exists in redis or data outdated
 	if !ok || it.Outdated() {
@@ -56,12 +56,12 @@ func (c *Cache) refreshMem(key string, copy interface{}, ttl int, f LoadFunc) {
 	c.mem.Set(key, it)
 }
 
-func (c *Cache) GetObjectWithExpire(key string, obj interface{}, ttl int, f LoadFunc) error {
+func (c *Cache) GetObjectWithExpiration(key string, obj interface{}, ttl int, f LoadFunc) error {
 	v, ok := c.mem.Get(key)
 	if ok {
 		if v.Outdated() {
 			to := deepcopy.Copy(obj)
-			go c.refreshMem(key, to, ttl, f)
+			go c.updateMem(key, to, ttl, f)
 		}
 		clone(v.Object, obj)
 		return nil
@@ -79,7 +79,7 @@ func (c *Cache) GetObjectWithExpire(key string, obj interface{}, ttl int, f Load
 }
 
 func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) error {
-	return c.GetObjectWithExpire(key, obj, ttl, f)
+	return c.GetObjectWithExpiration(key, obj, ttl, f)
 }
 
 // notify all other cache to delete key

@@ -16,7 +16,7 @@ type memcache struct {
 	janitor *janitor
 }
 
-// memcache will scan all objects each ci (clean interval), expired key will be
+// memcache will scan all objects per clean interval, expired key will be
 // deleted.
 func NewMemCache(ci time.Duration) *MemCache {
 	c := &memcache{
@@ -46,7 +46,6 @@ func (c *memcache) UpToDate(k string) (*Item, bool) {
 // Get an item from the memcache. Returns the item or nil, and a bool indicating
 // whether the key was found.
 func (c *memcache) Get(k string) (*Item, bool) {
-	// "Inlining" of get and Expired
 	tmp, found := c.items.Load(k)
 	if !found {
 		return nil, false
