@@ -7,8 +7,8 @@ import (
 
 var cache *Cache
 
-func Init(redisAddr, redisPassword string, lazy bool, maxconn int) {
-	cache = New(redisAddr, redisPassword, lazy, maxconn)
+func Init(redisAddr, redisPwd string, lazyMode bool, maxconn int) {
+	cache = New(redisAddr, redisPwd, lazyMode, maxconn)
 }
 
 func GetCacheKey(args ...interface{}) string {
@@ -35,12 +35,14 @@ func GetCacheKey(args ...interface{}) string {
 		case string:
 			bf.WriteString(v)
 		}
-		bf.WriteString("_")
 	}
 
 	var buf bytes.Buffer
-	for _, k := range args {
+	for i, k := range args {
 		addBuf(k, &buf)
+		if i < len(args)-1 {
+			addBuf("_", &buf)
+		}
 	}
 	return buf.String()
 }
@@ -49,6 +51,6 @@ func GetCacheObject(key string, obj interface{}, ttl int, f LoadFunc) error {
 	return cache.GetObject(key, obj, ttl, f)
 }
 
-func Delete(key string) {
-	cache.Delete(key)
+func Delete(key string) error {
+	return cache.Delete(key)
 }

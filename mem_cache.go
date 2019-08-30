@@ -1,4 +1,4 @@
-// inspired by https://github.com/patrickmn/go-cache
+// inspired from https://github.com/patrickmn/go-cache
 package cache
 
 import (
@@ -16,8 +16,7 @@ type memcache struct {
 	janitor *janitor
 }
 
-// memcache will scan all objects per clean interval, expired key will be
-// deleted.
+// memcache will scan all objects per clean interval, and delete expired key.
 func NewMemCache(ci time.Duration) *MemCache {
 	c := &memcache{
 		items: sync.Map{},
@@ -34,8 +33,8 @@ func (c *memcache) Set(k string, it *Item) {
 	c.items.Store(k, it)
 }
 
-// check value exists and up-to-date
-func (c *memcache) UpToDate(k string) (*Item, bool) {
+// return true if data is fresh
+func (c *memcache) Load(k string) (*Item, bool) {
 	it, exists := c.Get(k)
 	if !exists {
 		return nil, false
@@ -43,8 +42,7 @@ func (c *memcache) UpToDate(k string) (*Item, bool) {
 	return it, !it.Outdated()
 }
 
-// Get an item from the memcache. Returns the item or nil, and a bool indicating
-// whether the key was found.
+// Get an item from the memcache. Returns the item or nil, and a bool indicating whether the key was found.
 func (c *memcache) Get(k string) (*Item, bool) {
 	tmp, found := c.items.Load(k)
 	if !found {

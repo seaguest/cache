@@ -21,7 +21,8 @@ func NewRedisCache(p *redis.Pool, m *MemCache) *RedisCache {
 	return c
 }
 
-// store one mutex for each key
+// store one mutex per key
+// TODO, mux should be freed when no more accessed
 func (c *RedisCache) getMutex(key string) *sync.RWMutex {
 	var mux *sync.RWMutex
 	nMux := new(sync.RWMutex)
@@ -42,8 +43,8 @@ func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
 		mux.RUnlock()
 	}()
 
-	// check if item is up-to-date in mem, return directly
-	if v, valid := c.mem.UpToDate(key); valid {
+	// check if item is fresh in mem, return directly
+	if v, fresh := c.mem.Load(key); fresh {
 		return v, true
 	}
 
@@ -61,38 +62,20 @@ func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
 	if err != nil {
 		return nil, false
 	}
-	// 保存到mem
 	c.mem.Set(key, &it)
 	return &it, true
 }
 
-// 写入到redis
-func (c *RedisCache) Set(key string, it *Item) {
+// load redis with loader function
+// when sync is true, obj must be set before return.
+func (c *RedisCache) load(key string, obj interface{}, ttl int, lazyMode bool, f LoadFunc, sync bool) error {
 	mux := c.getMutex(key)
 	mux.Lock()
 	defer func() {
 		mux.Unlock()
 	}()
 
-	c.set(key, it)
-}
-
-func (c *RedisCache) set(key string, it *Item) error {
-	ttl := (it.Expiration - time.Now().UnixNano()) / int64(time.Second)
-	bs, _ := json.Marshal(it)
-	return RedisSetString(key, string(bs), int(ttl), c.pool)
-}
-
-// load redis with load function
-// when sync is true, obj must be set in sync mode.
-func (c *RedisCache) load(key string, obj interface{}, ttl int, lazy bool, f LoadFunc, sync bool) error {
-	mux := c.getMutex(key)
-	mux.Lock()
-	defer func() {
-		mux.Unlock()
-	}()
-
-	if it, valid := c.mem.UpToDate(key); valid {
+	if it, fresh := c.mem.Load(key); fresh {
 		if sync {
 			clone(it.Object, obj)
 		}
@@ -109,9 +92,11 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, lazy bool, f Loa
 	}
 
 	// update memcache
-	it := NewItem(o, ttl, lazy)
+	it := NewItem(o, ttl, lazyMode)
 
-	err = c.set(key, it)
+	rdsTTL := (it.Expiration - time.Now().UnixNano()) / int64(time.Second)
+	bs, _ := json.Marshal(it)
+	err = RedisSetString(key, string(bs), int(rdsTTL), c.pool)
 	if err != nil {
 		return err
 	}

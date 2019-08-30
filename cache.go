@@ -15,7 +15,7 @@ const (
 )
 
 type Cache struct {
-	// redis connection, handle Pushlish/Subscribe when delete a key
+	// redis connection, handle Pushlish/Subscribe at key deletion
 	pool *redis.Pool
 
 	// rds cache, handle redis level cache
@@ -25,32 +25,32 @@ type Cache struct {
 	mem *MemCache
 
 	// indicate if cache is in lazy mode
-	// when lazy is true, keys will stay longer in mem and redis
-	lazy bool
+	// in lazy mode, non-fresh data may still stay in cache.
+	lazyMode bool
 }
 
 type LoadFunc func() (interface{}, error)
 
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
-func New(redisAddr, redisPassword string, lazy bool, maxConnection int) *Cache {
+func New(redisAddr, redisPassword string, lazyMode bool, maxConnection int) *Cache {
 	c := &Cache{}
 	c.pool = GetRedisPool(redisAddr, redisPassword, maxConnection)
 	c.mem = NewMemCache(time.Second * 2)
 	c.rds = NewRedisCache(c.pool, c.mem)
-	c.lazy = lazy
+	c.lazyMode = lazyMode
 
 	// subscribe key deletion
 	go c.subscribe(delKeyChannel)
 	return c
 }
 
-// load mem memcache from redis
-func (c *Cache) updateMem(key string, copy interface{}, ttl int, f LoadFunc) {
+// sync memcache from redis
+func (c *Cache) syncMem(key string, copy interface{}, ttl int, f LoadFunc) {
 	it, ok := c.rds.Get(key, copy)
 	// if key not exists in redis or data outdated
 	if !ok || it.Outdated() {
-		c.rds.load(key, nil, ttl, c.lazy, f, false)
+		c.rds.load(key, nil, ttl, c.lazyMode, f, false)
 		return
 	}
 	c.mem.Set(key, it)
@@ -61,7 +61,7 @@ func (c *Cache) GetObjectWithExpiration(key string, obj interface{}, ttl int, f 
 	if ok {
 		if v.Outdated() {
 			to := deepcopy.Copy(obj)
-			go c.updateMem(key, to, ttl, f)
+			go c.syncMem(key, to, ttl, f)
 		}
 		clone(v.Object, obj)
 		return nil
@@ -70,24 +70,24 @@ func (c *Cache) GetObjectWithExpiration(key string, obj interface{}, ttl int, f 
 	v, ok = c.rds.Get(key, obj)
 	if ok {
 		if v.Outdated() {
-			go c.rds.load(key, nil, ttl, c.lazy, f, false)
+			go c.rds.load(key, nil, ttl, c.lazyMode, f, false)
 		}
 		clone(v.Object, obj)
 		return nil
 	}
-	return c.rds.load(key, obj, ttl, c.lazy, f, true)
+	return c.rds.load(key, obj, ttl, c.lazyMode, f, true)
 }
 
 func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) error {
 	return c.GetObjectWithExpiration(key, obj, ttl, f)
 }
 
-// notify all other cache to delete key
+// notify all cache nodes to delete key
 func (c *Cache) Delete(key string) error {
 	return RedisPublish(delKeyChannel, key, c.pool)
 }
 
-// subscriber delete key from mem and redis
+// redis subscriber for key deletion
 func (c *Cache) subscribe(key string) error {
 	conn := c.pool.Get()
 	defer conn.Close()
@@ -110,10 +110,7 @@ func (c *Cache) subscribe(key string) error {
 }
 
 func (c *Cache) delete(keyPattern string) error {
-	// remove memcache
 	c.mem.Delete(keyPattern)
-
-	// remove redis key
 	return c.rds.Delete(keyPattern)
 }
 
