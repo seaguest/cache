@@ -1,10 +1,9 @@
 # cache
-A lightweight distributed two-level cache (memory + redis) with loader function library for Go.
+A lightweight high-performance distributed two-level cache (memory + redis) with loader function library for Go.
 
-This is an cache-aside pattern implementation for two-level cache, in-memory cache is buit on top of sync.Map which is thread-safe.
+This is a cache-aside pattern implementation for two-level cache, in-memory cache is buit on top of sync.Map which is thread-safe.
 
-It does support multiple cache nodes, all cache nodes share one redis but maintains its own in-memory cache. When cache.Delete(key) is called, redis will publish to all cache nodes, then an delete 
- action (mem+redis) is performed by each cache node.
+It does support multiple cache nodes, all cache nodes share one redis but maintains its own in-memory cache. When cache.Delete(key) is called, redis will publish to all cache nodes, then an delete action (mem + redis) is performed on each cache node.
 
 ### Installation
 
@@ -13,7 +12,7 @@ It does support multiple cache nodes, all cache nodes share one redis but mainta
 
 ### Tips
 
-github.com/mohae/deepcopy is needed for object copy, if you want the copy to be efficient , please implement DeepCopy method. 
+object is cloned before returned to avoid dirty data, thus deepcoy (github.com/mohae/deepcopy) is used, to make it more efficient, please implement DeepCopy method. 
 
 ```
 func (p TestStruct) DeepCopy() interface{} {

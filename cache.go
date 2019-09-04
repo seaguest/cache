@@ -97,16 +97,15 @@ func (c *Cache) subscribe(key string) error {
 		return err
 	}
 
-	go func() {
-		for {
-			switch v := psc.Receive().(type) {
-			case redis.Message:
-				key := string(v.Data)
-				c.delete(key)
-			}
+	for {
+		switch v := psc.Receive().(type) {
+		case redis.Message:
+			key := string(v.Data)
+			c.delete(key)
+		case error:
+			return v
 		}
-	}()
-	return nil
+	}
 }
 
 func (c *Cache) delete(keyPattern string) error {
