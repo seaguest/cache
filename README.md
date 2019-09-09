@@ -12,7 +12,7 @@ It does support multiple cache nodes, all cache nodes share one redis but mainta
 
 ### Tips
 
-object is cloned before returned to avoid dirty data, thus deepcoy (github.com/mohae/deepcopy) is used, to make it more efficient, please implement DeepCopy method. 
+object is cloned before returned to avoid dirty data, thus deepcoy (github.com/mohae/deepcopy) is used, to make it more efficient, please implement DeepCopy method if you get a deepcopy performance trouble. 
 
 ```
 func (p TestStruct) DeepCopy() interface{} {

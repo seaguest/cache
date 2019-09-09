@@ -9,8 +9,11 @@ import (
 
 type RedisCache struct {
 	pool *redis.Pool
-	muxm sync.Map // RWMutex map for each key
-	mem  *MemCache
+
+	// RWMutex map for each cache key
+	muxm sync.Map
+
+	mem *MemCache
 }
 
 func NewRedisCache(p *redis.Pool, m *MemCache) *RedisCache {
@@ -22,7 +25,7 @@ func NewRedisCache(p *redis.Pool, m *MemCache) *RedisCache {
 }
 
 // store one mutex per key
-// TODO, mux should be freed when no more accessed
+// TODO, mux should be released when no more accessed
 func (c *RedisCache) getMutex(key string) *sync.RWMutex {
 	var mux *sync.RWMutex
 	nMux := new(sync.RWMutex)
@@ -43,7 +46,7 @@ func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
 		mux.RUnlock()
 	}()
 
-	// check if item is fresh in mem, return directly
+	// check if item is fresh in mem, return directly if true
 	if v, fresh := c.mem.Load(key); fresh {
 		return v, true
 	}

@@ -48,7 +48,7 @@ func New(redisAddr, redisPassword string, lazyMode bool, maxConnection int) *Cac
 // sync memcache from redis
 func (c *Cache) syncMem(key string, copy interface{}, ttl int, f LoadFunc) {
 	it, ok := c.rds.Get(key, copy)
-	// if key not exists in redis or data outdated
+	// if key not exists in redis or data outdated, then load from redis
 	if !ok || it.Outdated() {
 		c.rds.load(key, nil, ttl, c.lazyMode, f, false)
 		return
