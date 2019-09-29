@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"reflect"
 	"time"
 
@@ -24,8 +25,7 @@ type Cache struct {
 	// mem cache, handle memory cache operation
 	mem *MemCache
 
-	// indicate if cache is in lazy mode
-	// in lazy mode, non-fresh data may still stay in cache.
+	// in lazy mode, key will be alive in lazyFactor*TTL even the data is outdated
 	lazyMode bool
 }
 
@@ -63,8 +63,7 @@ func (c *Cache) GetObjectWithExpiration(key string, obj interface{}, ttl int, f 
 			to := deepcopy.Copy(obj)
 			go c.syncMem(key, to, ttl, f)
 		}
-		clone(v.Object, obj)
-		return nil
+		return clone(v.Object, obj)
 	}
 
 	v, ok = c.rds.Get(key, obj)
@@ -72,8 +71,7 @@ func (c *Cache) GetObjectWithExpiration(key string, obj interface{}, ttl int, f 
 		if v.Outdated() {
 			go c.rds.load(key, nil, ttl, c.lazyMode, f, false)
 		}
-		clone(v.Object, obj)
-		return nil
+		return clone(v.Object, obj)
 	}
 	return c.rds.load(key, obj, ttl, c.lazyMode, f, true)
 }
@@ -114,9 +112,14 @@ func (c *Cache) delete(keyPattern string) error {
 }
 
 // clone object to return, to avoid dirty data
-func clone(src, dst interface{}) {
+func clone(src, dst interface{}) error {
+	if reflect.TypeOf(src) != reflect.TypeOf(dst) {
+		return fmt.Errorf("inconsistent type, [%+v] expected, but got [%+v]", reflect.TypeOf(dst), reflect.TypeOf(src))
+	}
+
 	v := deepcopy.Copy(src)
 	if reflect.ValueOf(v).IsValid() {
 		reflect.ValueOf(dst).Elem().Set(reflect.Indirect(reflect.ValueOf(v)))
 	}
+	return nil
 }

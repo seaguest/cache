@@ -80,7 +80,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, lazyMode bool, f
 
 	if it, fresh := c.mem.Load(key); fresh {
 		if sync {
-			clone(it.Object, obj)
+			return clone(it.Object, obj)
 		}
 		return nil
 	}
@@ -91,7 +91,9 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, lazyMode bool, f
 	}
 
 	if sync {
-		clone(o, obj)
+		if err := clone(o, obj); err != nil {
+			return err
+		}
 	}
 
 	// update memcache
