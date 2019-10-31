@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -112,14 +113,17 @@ func (c *Cache) delete(keyPattern string) error {
 }
 
 // clone object to return, to avoid dirty data
-func clone(src, dst interface{}) error {
-	if reflect.TypeOf(src) != reflect.TypeOf(dst) {
-		return fmt.Errorf("inconsistent type, [%+v] expected, but got [%+v]", reflect.TypeOf(dst), reflect.TypeOf(src))
-	}
+func clone(src, dst interface{}) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.New(fmt.Sprint(r))
+			return
+		}
+	}()
 
 	v := deepcopy.Copy(src)
 	if reflect.ValueOf(v).IsValid() {
 		reflect.ValueOf(dst).Elem().Set(reflect.Indirect(reflect.ValueOf(v)))
 	}
-	return nil
+	return
 }
