@@ -11,7 +11,7 @@ func Init(redisAddr, redisPwd string, lazyMode bool, maxconn int) {
 	cache = New(redisAddr, redisPwd, lazyMode, maxconn)
 }
 
-func GetCacheKey(args ...interface{}) string {
+func GetKey(args ...interface{}) string {
 	addBuf := func(i interface{}, bf *bytes.Buffer) {
 		switch v := i.(type) {
 		case int:
@@ -47,7 +47,7 @@ func GetCacheKey(args ...interface{}) string {
 	return buf.String()
 }
 
-func GetCacheObject(key string, obj interface{}, ttl int, f LoadFunc) error {
+func GetObject(key string, obj interface{}, ttl int, f LoadFunc) error {
 	return cache.GetObject(key, obj, ttl, f)
 }
 

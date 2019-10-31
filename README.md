@@ -42,9 +42,9 @@ func (p TestStruct) DeepCopy() interface{} {
 }
 
 func getStruct(id uint32) (*TestStruct, error) {
-	key := cache.GetCacheKey("val", id)
+	key := cache.GetKey("val", id)
 	var v TestStruct
-	err := cache.GetCacheObject(key, &v, 60, func() (interface{}, error) {
+	err := cache.GetObject(key, &v, 60, func() (interface{}, error) {
 		// data fetch logic to be done here
 		time.Sleep(time.Millisecond * 100)
 		return &TestStruct{Name: "test"}, nil
