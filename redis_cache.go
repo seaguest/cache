@@ -71,7 +71,7 @@ func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
 
 // load redis with loader function
 // when sync is true, obj must be set before return.
-func (c *RedisCache) load(key string, obj interface{}, ttl int, lazyMode bool, f LoadFunc, sync bool) error {
+func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync bool) error {
 	mux := c.getMutex(key)
 	mux.Lock()
 	defer func() {
@@ -97,7 +97,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, lazyMode bool, f
 	}
 
 	// update memcache
-	it := NewItem(o, ttl, lazyMode)
+	it := NewItem(o, ttl)
 
 	rdsTTL := (it.Expiration - time.Now().UnixNano()) / int64(time.Second)
 	bs, _ := json.Marshal(it)

@@ -69,11 +69,11 @@ func (c *memcache) delete(k string) (interface{}, bool) {
 
 // Delete all expired items from the memcache.
 func (c *memcache) DeleteExpired() {
-	now := time.Now().UnixNano()
 	c.items.Range(func(key, value interface{}) bool {
 		v := value.(*Item)
 		k := key.(string)
-		if v.Expiration > 0 && now > v.Expiration {
+		// delete outdate for memory cahce
+		if v.Outdated() {
 			c.delete(k)
 		}
 		return true

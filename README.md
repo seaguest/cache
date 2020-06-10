@@ -1,7 +1,9 @@
 # cache
-A lightweight high-performance distributed two-level cache (in-memory + redis) with loader function library for Go.
+A lightweight high-performance distributed cache, built on top of in-memory + redis.
 
-This is a cache-aside pattern implementation for two-level cache, it does support multiple cache nodes, all cache nodes share one redis but maintains its own in-memory cache. When cache.Delete(key) is called, redis will publish deletion message to all cache nodes, then an delete action (in-memory + redis) is performed on each cache node.
+This is a cache-aside pattern implementation for two-level cache, it does support multiple cache nodes, all cache nodes share one redis but maintains its own in-memory cache. When cache.Delete(key) is called, redis will publish deletion message to all cache nodes to delete key on each cache node.
+
+In latest code, redis is set to lazy mode internally which means redis will keep keys for lazyFactor(256 as default)*ttl, while in-memory keeps for ttl.
 
 ### Installation
 
@@ -57,7 +59,7 @@ func getStruct(id uint32) (*TestStruct, error) {
 }
 
 func main() {
-	cache.Init("127.0.0.1:6379", "", true, 200)
+	cache.Init("127.0.0.1:6379", "", 200)
 	v, e := getStruct(100)
 	logger.Error(v, e)
 }
