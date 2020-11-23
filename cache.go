@@ -26,6 +26,9 @@ type Cache struct {
 
 	// mem cache, handles in-memory cache
 	mem *MemCache
+
+	// in debug mode, ttl is set to 1s, mem clean interval is set to 1s
+	debug bool
 }
 
 type LoadFunc func() (interface{}, error)
@@ -43,6 +46,14 @@ func New(redisAddr, redisPassword string, maxConnection int) *Cache {
 	return c
 }
 
+// enable debug mode
+func (c *Cache) EnableDebug() {
+	c.debug = true
+	c.mem.StopScan()
+	c.mem.SetCleanInterval(time.Second)
+	c.mem.StartScan()
+}
+
 // sync memcache from redis
 func (c *Cache) syncMem(key string, copy interface{}, ttl int, f LoadFunc) {
 	it, ok := c.rds.Get(key, copy)
@@ -54,7 +65,7 @@ func (c *Cache) syncMem(key string, copy interface{}, ttl int, f LoadFunc) {
 	c.mem.Set(key, it)
 }
 
-func (c *Cache) GetObjectWithExpiration(key string, obj interface{}, ttl int, f LoadFunc) error {
+func (c *Cache) getObjectWithExpiration(key string, obj interface{}, ttl int, f LoadFunc) error {
 	v, ok := c.mem.Get(key)
 	if ok {
 		if v.Outdated() {
@@ -75,7 +86,11 @@ func (c *Cache) GetObjectWithExpiration(key string, obj interface{}, ttl int, f 
 }
 
 func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) error {
-	return c.GetObjectWithExpiration(key, obj, ttl, f)
+	// is debug is enabled, set all ttl to 1s, clean interval to 1s
+	if c.debug {
+		ttl = 1
+	}
+	return c.getObjectWithExpiration(key, obj, ttl, f)
 }
 
 // notify all cache nodes to delete key

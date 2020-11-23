@@ -2,39 +2,60 @@
 package cache
 
 import (
-	"runtime"
 	"sync"
 	"time"
 )
 
 type MemCache struct {
-	*memcache
-}
-
-type memcache struct {
-	items   sync.Map
-	janitor *janitor
+	items sync.Map
+	ci    time.Duration
+	stop  chan bool
 }
 
 // memcache will scan all objects per clean interval, and delete expired key.
 func NewMemCache(ci time.Duration) *MemCache {
-	c := &memcache{
+	c := &MemCache{
 		items: sync.Map{},
+		ci:    ci,
+		stop:  make(chan bool),
 	}
-	C := &MemCache{c}
-	if ci > 0 {
-		runJanitor(c, ci)
-		runtime.SetFinalizer(C, stopJanitor)
-	}
-	return C
+
+	c.StartScan()
+	return c
 }
 
-func (c *memcache) Set(k string, it *Item) {
+func (c *MemCache) Set(k string, it *Item) {
 	c.items.Store(k, it)
 }
 
+// start key scanning to delete expired keys
+func (c *MemCache) StartScan() {
+	go func() {
+		ticker := time.NewTicker(c.ci)
+		for {
+			select {
+			case <-ticker.C:
+				c.DeleteExpired()
+			case <-c.stop:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+}
+
+// set clean interval
+func (c *MemCache) SetCleanInterval(ci time.Duration) {
+	c.ci = ci
+}
+
+// stop key scanning
+func (c *MemCache) StopScan() {
+	c.stop <- true
+}
+
 // return true if data is fresh
-func (c *memcache) Load(k string) (*Item, bool) {
+func (c *MemCache) Load(k string) (*Item, bool) {
 	it, exists := c.Get(k)
 	if !exists {
 		return nil, false
@@ -43,7 +64,7 @@ func (c *memcache) Load(k string) (*Item, bool) {
 }
 
 // Get an item from the memcache. Returns the item or nil, and a bool indicating whether the key was found.
-func (c *memcache) Get(k string) (*Item, bool) {
+func (c *MemCache) Get(k string) (*Item, bool) {
 	tmp, found := c.items.Load(k)
 	if !found {
 		return nil, false
@@ -58,17 +79,17 @@ func (c *memcache) Get(k string) (*Item, bool) {
 }
 
 // Delete an item from the memcache. Does nothing if the key is not in the memcache.
-func (c *memcache) Delete(k string) {
+func (c *MemCache) Delete(k string) {
 	c.delete(k)
 }
 
-func (c *memcache) delete(k string) (interface{}, bool) {
+func (c *MemCache) delete(k string) (interface{}, bool) {
 	c.items.Delete(k)
 	return nil, false
 }
 
 // Delete all expired items from the memcache.
-func (c *memcache) DeleteExpired() {
+func (c *MemCache) DeleteExpired() {
 	c.items.Range(func(key, value interface{}) bool {
 		v := value.(*Item)
 		k := key.(string)
@@ -78,35 +99,4 @@ func (c *memcache) DeleteExpired() {
 		}
 		return true
 	})
-}
-
-type janitor struct {
-	Interval time.Duration
-	stop     chan bool
-}
-
-func (j *janitor) Run(c *memcache) {
-	ticker := time.NewTicker(j.Interval)
-	for {
-		select {
-		case <-ticker.C:
-			c.DeleteExpired()
-		case <-j.stop:
-			ticker.Stop()
-			return
-		}
-	}
-}
-
-func stopJanitor(c *MemCache) {
-	c.janitor.stop <- true
-}
-
-func runJanitor(c *memcache, ci time.Duration) {
-	j := &janitor{
-		Interval: ci,
-		stop:     make(chan bool),
-	}
-	c.janitor = j
-	go j.Run(c)
 }
