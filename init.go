@@ -51,6 +51,10 @@ func GetObject(key string, obj interface{}, ttl int, f LoadFunc) error {
 	return cache.GetObject(key, obj, ttl, f)
 }
 
+func EnableDebug() {
+	cache.EnableDebug()
+}
+
 func Delete(key string) error {
 	return cache.Delete(key)
 }
