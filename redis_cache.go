@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
+	rs "github.com/seaguest/common/redis"
 )
 
 type RedisCache struct {
@@ -17,11 +18,10 @@ type RedisCache struct {
 }
 
 func NewRedisCache(p *redis.Pool, m *MemCache) *RedisCache {
-	c := &RedisCache{
+	return &RedisCache{
 		pool: p,
 		mem:  m,
 	}
-	return c
 }
 
 // store one mutex per key
@@ -51,11 +51,8 @@ func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
 		return v, true
 	}
 
-	body, err := RedisGetString(key, c.pool)
+	body, err := rs.RedisGetString(key, c.pool)
 	if err != nil && err != redis.ErrNil {
-		return nil, false
-	}
-	if body == "" {
 		return nil, false
 	}
 
@@ -101,7 +98,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 
 	rdsTTL := (it.Expiration - time.Now().UnixNano()) / int64(time.Second)
 	bs, _ := json.Marshal(it)
-	err = RedisSetString(key, string(bs), int(rdsTTL), c.pool)
+	err = rs.RedisSetString(key, string(bs), int(rdsTTL), c.pool)
 	if err != nil {
 		return err
 	}
@@ -111,5 +108,5 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 }
 
 func (c *RedisCache) Delete(keyPattern string) error {
-	return RedisDelKey(keyPattern, c.pool)
+	return rs.RedisDelKey(keyPattern, c.pool)
 }

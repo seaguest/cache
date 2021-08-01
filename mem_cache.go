@@ -20,7 +20,7 @@ func NewMemCache(ci time.Duration) *MemCache {
 		stop:  make(chan bool),
 	}
 
-	c.StartScan()
+	c.StartClean()
 	return c
 }
 
@@ -29,7 +29,7 @@ func (c *MemCache) Set(k string, it *Item) {
 }
 
 // start key scanning to delete expired keys
-func (c *MemCache) StartScan() {
+func (c *MemCache) StartClean() {
 	go func() {
 		ticker := time.NewTicker(c.ci)
 		for {
@@ -44,14 +44,14 @@ func (c *MemCache) StartScan() {
 	}()
 }
 
+// stop key scanning
+func (c *MemCache) StopClean() {
+	c.stop <- true
+}
+
 // set clean interval
 func (c *MemCache) SetCleanInterval(ci time.Duration) {
 	c.ci = ci
-}
-
-// stop key scanning
-func (c *MemCache) StopScan() {
-	c.stop <- true
 }
 
 // return true if data is fresh

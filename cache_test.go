@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/seaguest/common/logger"
+	"github.com/seaguest/log"
 )
 
 type TestStruct struct {
@@ -26,7 +26,7 @@ func getStruct(id uint32) (*TestStruct, error) {
 		return &TestStruct{Name: "test"}, nil
 	})
 	if err != nil {
-		logger.Error(err)
+		log.Error(err)
 		return nil, err
 	}
 	return &v, nil
@@ -35,5 +35,5 @@ func getStruct(id uint32) (*TestStruct, error) {
 func TestCache(t *testing.T) {
 	Init("127.0.0.1:6379", "", 200)
 	v, e := getStruct(100)
-	logger.Error(v, e)
+	log.Error(v, e)
 }

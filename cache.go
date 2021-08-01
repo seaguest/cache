@@ -9,6 +9,7 @@ import (
 	"github.com/gomodule/redigo/redis"
 	"github.com/json-iterator/go"
 	"github.com/mohae/deepcopy"
+	rs "github.com/seaguest/common/redis"
 )
 
 const (
@@ -27,17 +28,17 @@ type Cache struct {
 	// mem cache, handles in-memory cache
 	mem *MemCache
 
-	// in debug mode, ttl is set to 1s, mem clean interval is set to 1s
-	debug bool
+	// if disabled, GetObject call loader function directly
+	disabled bool
 }
 
 type LoadFunc func() (interface{}, error)
 
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
-func New(redisAddr, redisPassword string, maxConnection int) *Cache {
+func New(redisAddr, redisPassword string, maxConn int) *Cache {
 	c := &Cache{}
-	c.pool = GetRedisPool(redisAddr, redisPassword, maxConnection)
+	c.pool = rs.GetRedisPool(redisAddr, redisPassword, maxConn)
 	c.mem = NewMemCache(cleanInterval)
 	c.rds = NewRedisCache(c.pool, c.mem)
 
@@ -46,12 +47,9 @@ func New(redisAddr, redisPassword string, maxConnection int) *Cache {
 	return c
 }
 
-// enable debug mode
-func (c *Cache) EnableDebug() {
-	c.debug = true
-	c.mem.StopScan()
-	c.mem.SetCleanInterval(time.Second)
-	c.mem.StartScan()
+// disable cache, call loader function for each call
+func (c *Cache) Disable() {
+	c.disabled = true
 }
 
 // sync memcache from redis
@@ -86,16 +84,20 @@ func (c *Cache) getObjectWithExpiration(key string, obj interface{}, ttl int, f 
 }
 
 func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) error {
-	// is debug is enabled, set all ttl to 1s, clean interval to 1s
-	if c.debug {
-		ttl = 1
+	// is disabled is enabled, call loader function
+	if c.disabled {
+		o, err := f()
+		if err != nil {
+			return err
+		}
+		return clone(o, obj)
 	}
 	return c.getObjectWithExpiration(key, obj, ttl, f)
 }
 
 // notify all cache nodes to delete key
 func (c *Cache) Delete(key string) error {
-	return RedisPublish(delKeyChannel, key, c.pool)
+	return rs.RedisPublish(delKeyChannel, key, c.pool)
 }
 
 // redis subscriber for key deletion
