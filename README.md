@@ -5,6 +5,8 @@ This is a cache-aside pattern implementation for two-level cache, it does suppor
 
 In latest code, redis is set to lazy mode internally which means redis will keep keys for lazyFactor(256 as default)*ttl, while in-memory keeps for ttl.
 
+If cache is disabled (disabled by cache.Disabled()), GetObject will call directly loader function.
+
 ### Installation
 
 `go get -u github.com/seaguest/cache`
@@ -24,13 +26,13 @@ func (p TestStruct) DeepCopy() interface{} {
 ### Usage
 
 ``` 
-package main
+package cache
 
 import (
+	"testing"
 	"time"
 
-	"github.com/seaguest/cache"
-	"github.com/seaguest/common/logger"
+	"github.com/seaguest/log"
 )
 
 type TestStruct struct {
@@ -44,24 +46,24 @@ func (p TestStruct) DeepCopy() interface{} {
 }
 
 func getStruct(id uint32) (*TestStruct, error) {
-	key := cache.GetKey("val", id)
+	key := GetKey("val", id)
 	var v TestStruct
-	err := cache.GetObject(key, &v, 60, func() (interface{}, error) {
+	err := GetObject(key, &v, 60, func() (interface{}, error) {
 		// data fetch logic to be done here
 		time.Sleep(time.Millisecond * 100)
 		return &TestStruct{Name: "test"}, nil
 	})
 	if err != nil {
-		logger.Error(err)
+		log.Error(err)
 		return nil, err
 	}
 	return &v, nil
 }
 
-func main() {
-	cache.Init("127.0.0.1:6379", "", 200)
+func TestCache(t *testing.T) {
+	Init("127.0.0.1:6379", "", 200)
 	v, e := getStruct(100)
-	logger.Error(v, e)
+	log.Error(v, e)
 }
 
 
