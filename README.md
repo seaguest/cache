@@ -40,7 +40,7 @@ type TestStruct struct {
 }
 
 // this will be called by deepcopy to improves reflect copy performance
-func (p TestStruct) DeepCopy() interface{} {
+func (p *TestStruct) DeepCopy() interface{} {
 	c := p
 	return &c
 }

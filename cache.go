@@ -121,9 +121,9 @@ func (c *Cache) subscribe(key string) error {
 	}
 }
 
-func (c *Cache) delete(keyPattern string) error {
-	c.mem.Delete(keyPattern)
-	return c.rds.Delete(keyPattern)
+func (c *Cache) delete(key string) error {
+	c.mem.Delete(key)
+	return c.rds.Delete(key)
 }
 
 // clone object to return, to avoid dirty data

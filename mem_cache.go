@@ -9,49 +9,17 @@ import (
 type MemCache struct {
 	items sync.Map
 	ci    time.Duration
-	stop  chan bool
 }
 
-// memcache will scan all objects per clean interval, and delete expired key.
+// memcache will scan all objects for every clean interval and delete expired key.
 func NewMemCache(ci time.Duration) *MemCache {
 	c := &MemCache{
 		items: sync.Map{},
 		ci:    ci,
-		stop:  make(chan bool),
 	}
 
-	c.StartClean()
+	go c.runJanitor()
 	return c
-}
-
-func (c *MemCache) Set(k string, it *Item) {
-	c.items.Store(k, it)
-}
-
-// start key scanning to delete expired keys
-func (c *MemCache) StartClean() {
-	go func() {
-		ticker := time.NewTicker(c.ci)
-		for {
-			select {
-			case <-ticker.C:
-				c.DeleteExpired()
-			case <-c.stop:
-				ticker.Stop()
-				return
-			}
-		}
-	}()
-}
-
-// stop key scanning
-func (c *MemCache) StopClean() {
-	c.stop <- true
-}
-
-// set clean interval
-func (c *MemCache) SetCleanInterval(ci time.Duration) {
-	c.ci = ci
 }
 
 // return true if data is fresh
@@ -78,14 +46,26 @@ func (c *MemCache) Get(k string) (*Item, bool) {
 	return item, true
 }
 
-// Delete an item from the memcache. Does nothing if the key is not in the memcache.
-func (c *MemCache) Delete(k string) {
-	c.delete(k)
+func (c *MemCache) Set(k string, it *Item) {
+	c.items.Store(k, it)
 }
 
-func (c *MemCache) delete(k string) (interface{}, bool) {
+// Delete an item from the memcache. Does nothing if the key is not in the memcache.
+func (c *MemCache) Delete(k string) {
 	c.items.Delete(k)
-	return nil, false
+}
+
+// start key scanning to delete expired keys
+func (c *MemCache) runJanitor() {
+	ticker := time.NewTicker(c.ci)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			c.DeleteExpired()
+		}
+	}
 }
 
 // Delete all expired items from the memcache.
@@ -93,9 +73,9 @@ func (c *MemCache) DeleteExpired() {
 	c.items.Range(func(key, value interface{}) bool {
 		v := value.(*Item)
 		k := key.(string)
-		// delete outdate for memory cahce
+		// delete outdated for memory cache
 		if v.Outdated() {
-			c.delete(k)
+			c.items.Delete(k)
 		}
 		return true
 	})
