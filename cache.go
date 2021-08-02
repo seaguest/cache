@@ -15,8 +15,12 @@ import (
 const (
 	lazyFactor    = 256
 	delKeyChannel = "delkey"
-	cleanInterval = time.Second * 10
+	cleanInterval = time.Second * 10 // default memory cache clean interval
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
+
+type LoadFunc func() (interface{}, error)
 
 type Cache struct {
 	// redis connection
@@ -31,10 +35,6 @@ type Cache struct {
 	// if disabled, GetObject call loader function directly
 	disabled bool
 }
-
-type LoadFunc func() (interface{}, error)
-
-var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 func New(redisAddr, redisPassword string, maxConn int) *Cache {
 	c := &Cache{}
@@ -70,7 +70,7 @@ func (c *Cache) getObjectWithExpiration(key string, obj interface{}, ttl int, f 
 			to := deepcopy.Copy(obj)
 			go c.syncMem(key, to, ttl, f)
 		}
-		return clone(v.Object, obj)
+		return copy(v.Object, obj)
 	}
 
 	v, ok = c.rds.Get(key, obj)
@@ -78,7 +78,7 @@ func (c *Cache) getObjectWithExpiration(key string, obj interface{}, ttl int, f 
 		if v.Outdated() {
 			go c.rds.load(key, nil, ttl, f, false)
 		}
-		return clone(v.Object, obj)
+		return copy(v.Object, obj)
 	}
 	return c.rds.load(key, obj, ttl, f, true)
 }
@@ -90,7 +90,7 @@ func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 		if err != nil {
 			return err
 		}
-		return clone(o, obj)
+		return copy(o, obj)
 	}
 	return c.getObjectWithExpiration(key, obj, ttl, f)
 }
@@ -126,8 +126,8 @@ func (c *Cache) delete(key string) error {
 	return c.rds.Delete(key)
 }
 
-// clone object to return, to avoid dirty data
-func clone(src, dst interface{}) (err error) {
+// copy object to return, to avoid dirty data
+func copy(src, dst interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = errors.New(fmt.Sprint(r))

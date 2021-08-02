@@ -75,9 +75,10 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 		mux.Unlock()
 	}()
 
+	// in case memory key just get updated
 	if it, fresh := c.mem.Load(key); fresh {
 		if sync {
-			return clone(it.Object, obj)
+			return copy(it.Object, obj)
 		}
 		return nil
 	}
@@ -88,7 +89,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 	}
 
 	if sync {
-		if err := clone(o, obj); err != nil {
+		if err := copy(o, obj); err != nil {
 			return err
 		}
 	}
@@ -107,6 +108,6 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 	return nil
 }
 
-func (c *RedisCache) Delete(keyPattern string) error {
-	return rs.RedisDelKey(keyPattern, c.pool)
+func (c *RedisCache) Delete(key string) error {
+	return rs.RedisDelKey(key, c.pool)
 }

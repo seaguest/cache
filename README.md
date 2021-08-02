@@ -5,7 +5,7 @@ This is a cache-aside pattern implementation for two-level cache, it does suppor
 
 In latest code, redis is set to lazy mode internally which means redis will keep keys for lazyFactor(256 as default)*ttl, while in-memory keeps for ttl.
 
-If cache is disabled (disabled by cache.Disabled()), GetObject will call directly loader function.
+If cache is disabled (disabled by cache.Disable()), GetObject will call directly loader function.
 
 ### Installation
 
