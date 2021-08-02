@@ -1,17 +1,14 @@
 # cache
 A lightweight high-performance distributed cache, a cache-aside pattern implementation built on top of in-memory + redis.
 
-### Key Points
-```
-1, one global redis + multiple in-memory cache instances, cache.Delete(key) delete key from redis + all in-memory cache instances.
-2, keys stay ttl in in-memory cache, lazyFactor(256 default)*ttl in redis.
-3, cache can be disabled (cache.Disable()), thus GetObject will call directly loader function.
-```
+Cache contains one global redis + multiple in-memory instances, data can't be synced among instances, but cache.Delete(key) can delete key from redis + all memory instances, which can be used to make data consistent among instances.
+
+Keys stay ttl in in-memory cache, lazyFactor(256 default)*ttl in redis.
+
+Cache can be disabled (cache.Disable()), thus GetObject will call directly loader function.
 
 ### Core code
-Cache first checks the key in in-memory cache, then redis cache, if neither found, loader function will be called.
-data will be updated asynchronously if it is outdated.
-
+Keys will be checked firstly in in-memory cache then redis, if neither found, loader function will be called to return, data will be updated asynchronously if outdated.
 ```bigquery
 
 func (c *Cache) getObjectWithExpiration(key string, obj interface{}, ttl int, f LoadFunc) error {
@@ -43,12 +40,12 @@ func (c *Cache) getObjectWithExpiration(key string, obj interface{}, ttl int, f 
 
 ### Tips
 
-```github.com/mohae/deepcopy```is adopted to deepcopy before return to avoid dirty data.
+```github.com/mohae/deepcopy```is adopted for deepcopy, returned value is deepcopied to avoid dirty data.
 please implement DeepCopy interface if you encounter deepcopy performance trouble.
 
 ```bigquery
-func (p TestStruct) DeepCopy() interface{} {
-	c := p
+func (p *TestStruct) DeepCopy() interface{} {
+	c := *p
 	return &c
 }
 ```
