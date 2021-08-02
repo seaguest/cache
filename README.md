@@ -1,11 +1,40 @@
 # cache
-A lightweight high-performance distributed cache, built on top of in-memory + redis.
+A lightweight high-performance distributed cache, a cache-aside pattern implementation built on top of in-memory + redis.
 
-This is a cache-aside pattern implementation for two-level cache, it does support multiple cache nodes, all cache nodes share one redis but maintains its own in-memory cache. When cache.Delete(key) is called, redis will publish deletion message to all cache nodes to delete key on each cache node.
+### Key Points
+```
+1, one global redis + multiple in-memory cache instances, cache.Delete(key) delete key from redis + all in-memory cache instances.
+2, keys stay ttl in in-memory cache, lazyFactor(256 default)*ttl in redis.
+3, cache can be disabled (cache.Disable()), thus GetObject will call directly loader function.
+```
 
-In latest code, redis is set to lazy mode internally which means redis will keep keys for lazyFactor(256 as default)*ttl, while in-memory keeps for ttl.
+### Core code
+Cache first checks the key in in-memory cache, then redis cache, if neither found, loader function will be called.
+data will be updated asynchronously if it is outdated.
 
-If cache is disabled (disabled by cache.Disable()), GetObject will call directly loader function.
+```bigquery
+
+func (c *Cache) getObjectWithExpiration(key string, obj interface{}, ttl int, f LoadFunc) error {
+	v, ok := c.mem.Get(key)
+	if ok {
+		if v.Outdated() {
+			to := deepcopy.Copy(obj)
+			go c.syncMem(key, to, ttl, f)
+		}
+		return copy(v.Object, obj)
+	}
+
+	v, ok = c.rds.Get(key, obj)
+	if ok {
+		if v.Outdated() {
+			go c.rds.load(key, nil, ttl, f, false)
+		}
+		return copy(v.Object, obj)
+	}
+	return c.rds.load(key, obj, ttl, f, true)
+}
+
+```
 
 ### Installation
 
@@ -14,9 +43,10 @@ If cache is disabled (disabled by cache.Disable()), GetObject will call directly
 
 ### Tips
 
-object is deeply cloned (github.com/mohae/deepcopy is adopted) before returned to avoid dirty data, to make it more efficient, please implement DeepCopy method if you encounter deepcopy performance trouble. 
+```github.com/mohae/deepcopy```is adopted to deepcopy before return to avoid dirty data.
+please implement DeepCopy interface if you encounter deepcopy performance trouble.
 
-```
+```bigquery
 func (p TestStruct) DeepCopy() interface{} {
 	c := p
 	return &c
@@ -25,7 +55,7 @@ func (p TestStruct) DeepCopy() interface{} {
 
 ### Usage
 
-``` 
+``` bigquery
 package cache
 
 import (
@@ -41,7 +71,7 @@ type TestStruct struct {
 
 // this will be called by deepcopy to improves reflect copy performance
 func (p *TestStruct) DeepCopy() interface{} {
-	c := p
+	c := *p
 	return &c
 }
 
