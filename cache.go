@@ -36,9 +36,9 @@ type Cache struct {
 	disabled bool
 }
 
-func New(redisAddr, redisPassword string, maxConn int) *Cache {
+func New(redisAddr, redisPwd string, maxConn int) *Cache {
 	c := &Cache{}
-	c.pool = rs.GetRedisPool(redisAddr, redisPassword, maxConn)
+	c.pool = rs.GetRedisPool(redisAddr, redisPwd, maxConn)
 	c.mem = NewMemCache(cleanInterval)
 	c.rds = NewRedisCache(c.pool, c.mem)
 
@@ -53,8 +53,8 @@ func (c *Cache) Disable() {
 }
 
 // sync memcache from redis
-func (c *Cache) syncMem(key string, copy interface{}, ttl int, f LoadFunc) {
-	it, ok := c.rds.Get(key, copy)
+func (c *Cache) syncMem(key string, obj interface{}, ttl int, f LoadFunc) {
+	it, ok := c.rds.Get(key, obj)
 	// if key not exists in redis or data outdated, then load from redis
 	if !ok || it.Outdated() {
 		c.rds.load(key, nil, ttl, f, false)
@@ -67,8 +67,8 @@ func (c *Cache) getObjectWithExpiration(key string, obj interface{}, ttl int, f 
 	v, ok := c.mem.Get(key)
 	if ok {
 		if v.Outdated() {
-			to := deepcopy.Copy(obj)
-			go c.syncMem(key, to, ttl, f)
+			dst := deepcopy.Copy(obj)
+			go c.syncMem(key, dst, ttl, f)
 		}
 		return copy(v.Object, obj)
 	}
@@ -95,12 +95,14 @@ func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 	return c.getObjectWithExpiration(key, obj, ttl, f)
 }
 
-// notify all cache nodes to delete key
+// notify all cache instances to delete cache key
 func (c *Cache) Delete(key string) error {
+	// delete redis, then pub to delete cache
+	c.rds.Delete(key)
 	return rs.RedisPublish(delKeyChannel, key, c.pool)
 }
 
-// redis subscriber for key deletion
+// redis subscriber for key deletion, delete keys in memory
 func (c *Cache) subscribe(key string) error {
 	conn := c.pool.Get()
 	defer conn.Close()
@@ -114,16 +116,11 @@ func (c *Cache) subscribe(key string) error {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
 			key := string(v.Data)
-			c.delete(key)
+			c.mem.Delete(key)
 		case error:
 			return v
 		}
 	}
-}
-
-func (c *Cache) delete(key string) error {
-	c.mem.Delete(key)
-	return c.rds.Delete(key)
 }
 
 // copy object to return, to avoid dirty data

@@ -10,13 +10,12 @@ Cache can be disabled (cache.Disable()), thus GetObject will call directly loade
 ### Core code
 Keys will be checked firstly in in-memory cache then redis, if neither found, loader function will be called to return, data will be updated asynchronously if outdated.
 ```bigquery
-
 func (c *Cache) getObjectWithExpiration(key string, obj interface{}, ttl int, f LoadFunc) error {
 	v, ok := c.mem.Get(key)
 	if ok {
 		if v.Outdated() {
-			to := deepcopy.Copy(obj)
-			go c.syncMem(key, to, ttl, f)
+			dst := deepcopy.Copy(obj)
+			go c.syncMem(key, dst, ttl, f)
 		}
 		return copy(v.Object, obj)
 	}

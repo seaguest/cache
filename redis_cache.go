@@ -94,7 +94,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 		}
 	}
 
-	// update memcache
+	// update memory cache
 	it := NewItem(o, ttl)
 
 	rdsTTL := (it.Expiration - time.Now().UnixNano()) / int64(time.Second)
