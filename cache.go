@@ -63,7 +63,19 @@ func (c *Cache) syncMem(key string, obj interface{}, ttl int, f LoadFunc) {
 	c.mem.Set(key, it)
 }
 
-func (c *Cache) getObjectWithExpiration(key string, obj interface{}, ttl int, f LoadFunc) error {
+func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) error {
+	// is disabled, call loader function
+	if c.disabled {
+		o, err := f()
+		if err != nil {
+			return err
+		}
+		return copy(o, obj)
+	}
+	return c.getObject(key, obj, ttl, f)
+}
+
+func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) error {
 	v, ok := c.mem.Get(key)
 	if ok {
 		if v.Outdated() {
@@ -81,18 +93,6 @@ func (c *Cache) getObjectWithExpiration(key string, obj interface{}, ttl int, f 
 		return copy(v.Object, obj)
 	}
 	return c.rds.load(key, obj, ttl, f, true)
-}
-
-func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) error {
-	// is disabled is enabled, call loader function
-	if c.disabled {
-		o, err := f()
-		if err != nil {
-			return err
-		}
-		return copy(o, obj)
-	}
-	return c.getObjectWithExpiration(key, obj, ttl, f)
 }
 
 // notify all cache instances to delete cache key
