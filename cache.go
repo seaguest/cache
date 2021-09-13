@@ -99,7 +99,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 func (c *Cache) Delete(key string) error {
 	// delete redis, then pub to delete cache
 	c.rds.Delete(key)
-	return rs.RedisPublish(delKeyChannel, key, c.pool)
+	return rs.Publish(delKeyChannel, key, c.pool)
 }
 
 // redis subscriber for key deletion, delete keys in memory

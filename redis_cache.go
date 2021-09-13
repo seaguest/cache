@@ -51,7 +51,7 @@ func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
 		return v, true
 	}
 
-	body, err := rs.RedisGetString(key, c.pool)
+	body, err := rs.GetString(key, c.pool)
 	if err != nil && err != redis.ErrNil {
 		return nil, false
 	}
@@ -99,7 +99,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 
 	rdsTTL := (it.Expiration - time.Now().UnixNano()) / int64(time.Second)
 	bs, _ := json.Marshal(it)
-	err = rs.RedisSetString(key, string(bs), int(rdsTTL), c.pool)
+	err = rs.SetString(key, string(bs), int(rdsTTL), c.pool)
 	if err != nil {
 		return err
 	}
@@ -109,5 +109,5 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 }
 
 func (c *RedisCache) Delete(key string) error {
-	return rs.RedisDelKey(key, c.pool)
+	return rs.DelKey(key, c.pool)
 }
