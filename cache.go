@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime/debug"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/json-iterator/go"
-	"github.com/mohae/deepcopy"
 	rs "github.com/seaguest/common/redis"
+	"github.com/seaguest/deepcopy"
+	"github.com/seaguest/log"
 )
 
 const (
@@ -128,6 +130,8 @@ func copy(src, dst interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = errors.New(fmt.Sprint(r))
+			log.Error(err)
+			debug.PrintStack()
 			return
 		}
 	}()
