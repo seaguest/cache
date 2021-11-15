@@ -1,10 +1,9 @@
 package cache
 
 import (
+	"log"
 	"testing"
 	"time"
-
-	"github.com/seaguest/log"
 )
 
 type TestStruct struct {
@@ -26,7 +25,7 @@ func getStruct(id uint32) (*TestStruct, error) {
 		return &TestStruct{Name: "test"}, nil
 	})
 	if err != nil {
-		log.Error(err)
+		log.Println(err)
 		return nil, err
 	}
 	return &v, nil
@@ -35,5 +34,5 @@ func getStruct(id uint32) (*TestStruct, error) {
 func TestCache(t *testing.T) {
 	Init("127.0.0.1:6379", "", 200)
 	v, e := getStruct(100)
-	log.Error(v, e)
+	log.Println(v, e)
 }

@@ -50,7 +50,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 
 ### Tips
 
-```github.com/mohae/deepcopy```is adopted for deepcopy, returned value is deepcopied to avoid dirty data.
+```github.com/seaguest/deepcopy```is adopted for deepcopy, returned value is deepcopied to avoid dirty data.
 please implement DeepCopy interface if you encounter deepcopy performance trouble.
 
 ```bigquery
@@ -66,10 +66,9 @@ func (p *TestStruct) DeepCopy() interface{} {
 package cache
 
 import (
+	"log"
 	"testing"
 	"time"
-
-	"github.com/seaguest/log"
 )
 
 type TestStruct struct {
@@ -91,7 +90,7 @@ func getStruct(id uint32) (*TestStruct, error) {
 		return &TestStruct{Name: "test"}, nil
 	})
 	if err != nil {
-		log.Error(err)
+		log.Println(err)
 		return nil, err
 	}
 	return &v, nil
@@ -100,8 +99,9 @@ func getStruct(id uint32) (*TestStruct, error) {
 func TestCache(t *testing.T) {
 	Init("127.0.0.1:6379", "", 200)
 	v, e := getStruct(100)
-	log.Error(v, e)
+	log.Println(v, e)
 }
+
 
 
 ```
