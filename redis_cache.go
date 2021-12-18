@@ -108,5 +108,5 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 }
 
 func (c *RedisCache) Delete(key string) error {
-	return deleteKey(key, c.pool)
+	return delete(key, c.pool)
 }
