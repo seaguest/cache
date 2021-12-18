@@ -10,18 +10,18 @@ type Item struct {
 }
 
 // Returns true if data is outdated.
-func (item Item) Outdated() bool {
-	if item.Outdate == 0 {
+func (i *Item) Outdated() bool {
+	if i.Outdate == 0 {
 		return false
 	}
 
-	if item.Outdate < time.Now().UnixNano() {
+	if i.Outdate < time.Now().UnixNano() {
 		return true
 	}
 	return false
 }
 
-func NewItem(v interface{}, d int) *Item {
+func newItem(v interface{}, d int) *Item {
 	ttl := d
 	var od, e int64
 	if d > 0 {

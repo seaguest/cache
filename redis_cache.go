@@ -38,7 +38,7 @@ func (c *RedisCache) getMutex(key string) *sync.RWMutex {
 }
 
 // read item from redis
-func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
+func (c *RedisCache) get(key string, obj interface{}) (*Item, bool) {
 	mux := c.getMutex(key)
 	mux.RLock()
 	defer func() {
@@ -46,7 +46,7 @@ func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
 	}()
 
 	// check if item is fresh in mem, return directly if true
-	if v, fresh := c.mem.Load(key); fresh {
+	if v, fresh := c.mem.load(key); fresh {
 		return v, true
 	}
 
@@ -61,7 +61,7 @@ func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
 	if err != nil {
 		return nil, false
 	}
-	c.mem.Set(key, &it)
+	c.mem.set(key, &it)
 	return &it, true
 }
 
@@ -75,7 +75,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 	}()
 
 	// in case memory key just get updated
-	if it, fresh := c.mem.Load(key); fresh {
+	if it, fresh := c.mem.load(key); fresh {
 		if sync {
 			return copy(it.Object, obj)
 		}
@@ -94,7 +94,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 	}
 
 	// update memory cache
-	it := NewItem(o, ttl)
+	it := newItem(o, ttl)
 
 	rdsTTL := (it.Expiration - time.Now().UnixNano()) / int64(time.Second)
 	bs, _ := json.Marshal(it)
@@ -103,10 +103,10 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 		return err
 	}
 
-	c.mem.Set(key, it)
+	c.mem.set(key, it)
 	return nil
 }
 
-func (c *RedisCache) Delete(key string) error {
+func (c *RedisCache) delete(key string) error {
 	return delete(key, c.pool)
 }

@@ -23,7 +23,7 @@ func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 }
 
 func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) error {
-	v, ok := c.mem.Get(key)
+	v, ok := c.mem.get(key)
 	if ok {
 		if v.Outdated() {
 			dst := deepcopy.Copy(obj)
@@ -32,7 +32,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 		return copy(v.Object, obj)
 	}
 
-	v, ok = c.rds.Get(key, obj)
+	v, ok = c.rds.get(key, obj)
 	if ok {
 		if v.Outdated() {
 			go c.rds.load(key, nil, ttl, f, false)
@@ -42,6 +42,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 	return c.rds.load(key, obj, ttl, f, true)
 }
 ```
+
 
 ### Installation
 

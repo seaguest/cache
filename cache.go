@@ -54,13 +54,13 @@ func (c *Cache) Disable() {
 
 // sync memcache from redis
 func (c *Cache) syncMem(key string, obj interface{}, ttl int, f LoadFunc) {
-	it, ok := c.rds.Get(key, obj)
+	it, ok := c.rds.get(key, obj)
 	// if key not exists in redis or data outdated, then load from redis
 	if !ok || it.Outdated() {
 		c.rds.load(key, nil, ttl, f, false)
 		return
 	}
-	c.mem.Set(key, it)
+	c.mem.set(key, it)
 }
 
 func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) error {
@@ -76,7 +76,7 @@ func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 }
 
 func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) error {
-	v, ok := c.mem.Get(key)
+	v, ok := c.mem.get(key)
 	if ok {
 		if v.Outdated() {
 			dst := deepcopy.Copy(obj)
@@ -85,7 +85,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 		return copy(v.Object, obj)
 	}
 
-	v, ok = c.rds.Get(key, obj)
+	v, ok = c.rds.get(key, obj)
 	if ok {
 		if v.Outdated() {
 			go c.rds.load(key, nil, ttl, f, false)
@@ -98,7 +98,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 // notify all cache instances to delete cache key
 func (c *Cache) Delete(key string) error {
 	// delete redis, then pub to delete cache
-	c.rds.Delete(key)
+	c.rds.delete(key)
 	return publish(delKeyChannel, key, c.pool)
 }
 
@@ -116,7 +116,7 @@ func (c *Cache) subscribe(key string) error {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
 			key := string(v.Data)
-			c.mem.Delete(key)
+			c.mem.delete(key)
 		case error:
 			return v
 		}

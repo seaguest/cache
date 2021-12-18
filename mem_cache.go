@@ -23,16 +23,16 @@ func NewMemCache(ci time.Duration) *MemCache {
 }
 
 // return true if data is fresh
-func (c *MemCache) Load(k string) (*Item, bool) {
-	it, exists := c.Get(k)
+func (c *MemCache) load(k string) (*Item, bool) {
+	it, exists := c.get(k)
 	if !exists {
 		return nil, false
 	}
 	return it, !it.Outdated()
 }
 
-// Get an item from the memcache. Returns the item or nil, and a bool indicating whether the key was found.
-func (c *MemCache) Get(k string) (*Item, bool) {
+// get an item from the memcache. Returns the item or nil, and a bool indicating whether the key was found.
+func (c *MemCache) get(k string) (*Item, bool) {
 	tmp, found := c.items.Load(k)
 	if !found {
 		return nil, false
@@ -46,12 +46,12 @@ func (c *MemCache) Get(k string) (*Item, bool) {
 	return item, true
 }
 
-func (c *MemCache) Set(k string, it *Item) {
+func (c *MemCache) set(k string, it *Item) {
 	c.items.Store(k, it)
 }
 
 // Delete an item from the memcache. Does nothing if the key is not in the memcache.
-func (c *MemCache) Delete(k string) {
+func (c *MemCache) delete(k string) {
 	c.items.Delete(k)
 }
 
