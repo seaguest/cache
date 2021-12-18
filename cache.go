@@ -9,7 +9,6 @@ import (
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/json-iterator/go"
-	rs "github.com/seaguest/common/redis"
 	"github.com/seaguest/deepcopy"
 )
 
@@ -39,7 +38,7 @@ type Cache struct {
 
 func New(redisAddr, redisPwd string, maxConn int) *Cache {
 	c := &Cache{}
-	c.pool = rs.GetRedisPool(redisAddr, redisPwd, maxConn)
+	c.pool = getRedisPool(redisAddr, redisPwd, maxConn)
 	c.mem = NewMemCache(cleanInterval)
 	c.rds = NewRedisCache(c.pool, c.mem)
 
@@ -100,7 +99,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 func (c *Cache) Delete(key string) error {
 	// delete redis, then pub to delete cache
 	c.rds.Delete(key)
-	return rs.Publish(delKeyChannel, key, c.pool)
+	return publish(delKeyChannel, key, c.pool)
 }
 
 // redis subscriber for key deletion, delete keys in memory

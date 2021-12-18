@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
-	rs "github.com/seaguest/common/redis"
 )
 
 type RedisCache struct {
@@ -51,7 +50,7 @@ func (c *RedisCache) Get(key string, obj interface{}) (*Item, bool) {
 		return v, true
 	}
 
-	body, err := rs.GetString(key, c.pool)
+	body, err := getString(key, c.pool)
 	if err != nil && err != redis.ErrNil {
 		return nil, false
 	}
@@ -99,7 +98,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 
 	rdsTTL := (it.Expiration - time.Now().UnixNano()) / int64(time.Second)
 	bs, _ := json.Marshal(it)
-	err = rs.SetString(key, string(bs), int(rdsTTL), c.pool)
+	err = setString(key, string(bs), int(rdsTTL), c.pool)
 	if err != nil {
 		return err
 	}
@@ -109,5 +108,5 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 }
 
 func (c *RedisCache) Delete(key string) error {
-	return rs.DelKey(key, c.pool)
+	return deleteKey(key, c.pool)
 }
