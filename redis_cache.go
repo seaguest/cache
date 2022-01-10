@@ -8,7 +8,7 @@ import (
 )
 
 type RedisCache struct {
-	pool *redis.Pool
+	getConn func() redis.Conn
 
 	// RWMutex map for each cache key
 	muxm sync.Map
@@ -16,10 +16,10 @@ type RedisCache struct {
 	mem *MemCache
 }
 
-func NewRedisCache(p *redis.Pool, m *MemCache) *RedisCache {
+func NewRedisCache(gc func() redis.Conn, m *MemCache) *RedisCache {
 	return &RedisCache{
-		pool: p,
-		mem:  m,
+		getConn: gc,
+		mem:     m,
 	}
 }
 
@@ -50,7 +50,7 @@ func (c *RedisCache) get(key string, obj interface{}) (*Item, bool) {
 		return v, true
 	}
 
-	body, err := getString(key, c.pool)
+	body, err := getString(key, c.getConn())
 	if err != nil && err != redis.ErrNil {
 		return nil, false
 	}
@@ -98,7 +98,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 
 	rdsTTL := (it.Expiration - time.Now().UnixNano()) / int64(time.Second)
 	bs, _ := json.Marshal(it)
-	err = setString(key, string(bs), int(rdsTTL), c.pool)
+	err = setString(key, string(bs), int(rdsTTL), c.getConn())
 	if err != nil {
 		return err
 	}
@@ -108,5 +108,5 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 }
 
 func (c *RedisCache) delete(key string) error {
-	return delete(key, c.pool)
+	return delete(key, c.getConn())
 }

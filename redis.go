@@ -6,10 +6,10 @@ import (
 	"github.com/gomodule/redigo/redis"
 )
 
-func getRedisPool(address, password string, maxConnection int) *redis.Pool {
+func getRedisPool(addr string, opts ...redis.DialOption) (*redis.Pool, error) {
 	pool := &redis.Pool{
-		MaxIdle:     maxConnection,
-		MaxActive:   maxConnection,
+		MaxIdle:     200,
+		MaxActive:   200,
 		Wait:        false,
 		IdleTimeout: 240 * time.Second,
 		TestOnBorrow: func(c redis.Conn, t time.Time) error {
@@ -17,28 +17,13 @@ func getRedisPool(address, password string, maxConnection int) *redis.Pool {
 			return err
 		},
 		Dial: func() (redis.Conn, error) {
-			return dial("tcp", address, password)
+			return redis.Dial("tcp", addr, opts...)
 		},
 	}
-	return pool
+	return pool, nil
 }
 
-func dial(network, address, password string) (redis.Conn, error) {
-	c, err := redis.Dial(network, address)
-	if err != nil {
-		return nil, err
-	}
-	if password != "" {
-		if _, err := c.Do("AUTH", password); err != nil {
-			c.Close()
-			return nil, err
-		}
-	}
-	return c, err
-}
-
-func setString(key, value string, ttl int, pool *redis.Pool) error {
-	conn := pool.Get()
+func setString(key, value string, ttl int, conn redis.Conn) error {
 	defer conn.Close()
 
 	if err := conn.Err(); err != nil {
@@ -48,8 +33,7 @@ func setString(key, value string, ttl int, pool *redis.Pool) error {
 	return err
 }
 
-func getString(key string, pool *redis.Pool) (string, error) {
-	conn := pool.Get()
+func getString(key string, conn redis.Conn) (string, error) {
 	defer conn.Close()
 
 	if err := conn.Err(); err != nil {
@@ -63,8 +47,7 @@ func getString(key string, pool *redis.Pool) (string, error) {
 	return s, nil
 }
 
-func delete(key string, pool *redis.Pool) error {
-	conn := pool.Get()
+func delete(key string, conn redis.Conn) error {
 	defer conn.Close()
 
 	var err error
@@ -76,8 +59,7 @@ func delete(key string, pool *redis.Pool) error {
 	return err
 }
 
-func publish(channel, message string, pool *redis.Pool) error {
-	conn := pool.Get()
+func publish(channel, message string, conn redis.Conn) error {
 	defer conn.Close()
 
 	if err := conn.Err(); err != nil {

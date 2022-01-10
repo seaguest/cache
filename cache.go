@@ -24,7 +24,7 @@ type LoadFunc func() (interface{}, error)
 
 type Cache struct {
 	// redis connection
-	pool *redis.Pool
+	getConn func() redis.Conn
 
 	// rds cache, handles redis level cache
 	rds *RedisCache
@@ -36,11 +36,11 @@ type Cache struct {
 	disabled bool
 }
 
-func New(redisAddr, redisPwd string, maxConn int) *Cache {
+func New(gc func() redis.Conn) *Cache {
 	c := &Cache{}
-	c.pool = getRedisPool(redisAddr, redisPwd, maxConn)
+	c.getConn = gc
 	c.mem = NewMemCache(cleanInterval)
-	c.rds = NewRedisCache(c.pool, c.mem)
+	c.rds = NewRedisCache(c.getConn, c.mem)
 
 	// subscribe key deletion
 	go c.subscribe(delKeyChannel)
@@ -99,12 +99,12 @@ func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 func (c *Cache) Delete(key string) error {
 	// delete redis, then pub to delete cache
 	c.rds.delete(key)
-	return publish(delKeyChannel, key, c.pool)
+	return publish(delKeyChannel, key, c.getConn())
 }
 
 // redis subscriber for key deletion, delete keys in memory
 func (c *Cache) subscribe(key string) error {
-	conn := c.pool.Get()
+	conn := c.getConn()
 	defer conn.Close()
 
 	psc := redis.PubSubConn{Conn: conn}
