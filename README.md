@@ -7,6 +7,12 @@ Keys stay ttl in in-memory cache, lazyFactor(256 default)*ttl in redis.
 
 Cache can be disabled (cache.Disable()), thus GetObject will call directly loader function.
 
+### Features
+
+* two-level cache
+* redis cluster support
+
+
 ### Core code
 Keys will be checked firstly in in-memory cache then redis, if neither found, loader function will be called to return, data will be updated asynchronously if outdated.
 ```bigquery
@@ -98,7 +104,7 @@ func getStruct(id uint32) (*TestStruct, error) {
 }
 
 func TestCache(t *testing.T) {
-	Init("127.0.0.1:6379", "", 200)
+	Init([]string{"127.0.0.1:6379"})
 	v, e := getStruct(100)
 	log.Println(v, e)
 }

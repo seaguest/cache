@@ -32,7 +32,7 @@ func getStruct(id uint32) (*TestStruct, error) {
 }
 
 func TestCache(t *testing.T) {
-	Init("127.0.0.1:6379", "", 200)
+	Init([]string{"127.0.0.1:6379"})
 	v, e := getStruct(100)
 	log.Println(v, e)
 }

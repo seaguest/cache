@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"reflect"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -13,17 +12,17 @@ import (
 
 var cache *Cache
 
-func Init(addr interface{}, opts ...redis.DialOption) {
+func Init(addrs []string, opts ...redis.DialOption) {
 	var getConn func() redis.Conn
-	if reflect.TypeOf(addr).Kind() == reflect.String {
-		pool, _ := getRedisPool(addr.(string), opts...)
+	if len(addrs) == 1 {
+		pool, _ := getRedisPool(addrs[0], opts...)
 
 		getConn = func() redis.Conn {
 			return pool.Get()
 		}
-	} else if reflect.TypeOf(addr).Kind() == reflect.Slice && reflect.TypeOf(addr).Elem().Kind() == reflect.String {
+	} else {
 		cluster := redisc.Cluster{
-			StartupNodes: addr.([]string),
+			StartupNodes: addrs,
 			DialOptions:  []redis.DialOption{redis.DialConnectTimeout(5 * time.Second)},
 			CreatePool:   getRedisPool,
 		}
@@ -36,8 +35,6 @@ func Init(addr interface{}, opts ...redis.DialOption) {
 		getConn = func() redis.Conn {
 			return cluster.Get()
 		}
-	} else {
-		log.Fatalf("invalid addr [%s]", addr)
 	}
 
 	cache = New(getConn)
