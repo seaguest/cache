@@ -3,7 +3,6 @@ package cache
 import (
 	"errors"
 	"fmt"
-	"github.com/seaguest/log"
 	"reflect"
 	"runtime/debug"
 	"time"
@@ -99,7 +98,6 @@ func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 // notify all cache instances to delete cache key
 func (c *Cache) Delete(key string) error {
 	// delete redis, then pub to delete cache
-	log.Error("deleting....", key)
 	c.rds.delete(key)
 	return publish(delKeyChannel, key, c.getConn())
 }
@@ -108,8 +106,6 @@ func (c *Cache) Delete(key string) error {
 func (c *Cache) subscribe(key string) error {
 	conn := c.getConn()
 	defer conn.Close()
-
-	log.Error("rds deleting....", key)
 
 	psc := redis.PubSubConn{Conn: conn}
 	if err := psc.Subscribe(key); err != nil {
@@ -120,7 +116,6 @@ func (c *Cache) subscribe(key string) error {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
 			key := string(v.Data)
-			log.Error("mem deleting....", key)
 			c.mem.delete(key)
 		case error:
 			return v
