@@ -95,10 +95,13 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 
 	// update memory cache
 	it := newItem(o, ttl)
+	redisTTL := 0
+	if it.Expiration != 0 {
+		redisTTL = int((it.Expiration - time.Now().UnixNano()) / int64(time.Second))
+	}
 
-	rdsTTL := (it.Expiration - time.Now().UnixNano()) / int64(time.Second)
 	bs, _ := json.Marshal(it)
-	err = setString(key, string(bs), int(rdsTTL), c.getConn())
+	err = setString(key, string(bs), redisTTL, c.getConn())
 	if err != nil {
 		return err
 	}

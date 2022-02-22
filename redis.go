@@ -26,10 +26,15 @@ func getRedisPool(addr string, opts ...redis.DialOption) (*redis.Pool, error) {
 func setString(key, value string, ttl int, conn redis.Conn) error {
 	defer conn.Close()
 
-	if err := conn.Err(); err != nil {
+	var err error
+	if err = conn.Err(); err != nil {
 		return err
 	}
-	_, err := conn.Do("SETEX", key, ttl, value)
+	if ttl == 0 {
+		_, err = conn.Do("SET", key, value)
+	} else {
+		_, err = conn.Do("SETEX", key, ttl, value)
+	}
 	return err
 }
 
