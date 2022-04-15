@@ -5,7 +5,10 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
+	jsoniter "github.com/json-iterator/go"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 type RedisCache struct {
 	getConn func() redis.Conn
@@ -97,7 +100,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 	it := newItem(o, ttl)
 	redisTTL := 0
 	if it.Expiration != 0 {
-		redisTTL = int((it.Expiration - time.Now().UnixNano()) / int64(time.Second))
+		redisTTL = int(it.Expiration - time.Now().Unix())
 	}
 
 	bs, _ := json.Marshal(it)

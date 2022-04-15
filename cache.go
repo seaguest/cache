@@ -8,17 +8,14 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
-	"github.com/json-iterator/go"
 	"github.com/seaguest/deepcopy"
 )
 
 const (
-	lazyFactor    = 256
+	lazyFactor    = 64
 	delKeyChannel = "delkey"
 	cleanInterval = time.Second * 10 // default memory cache clean interval
 )
-
-var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 type LoadFunc func() (interface{}, error)
 
@@ -47,7 +44,7 @@ func New(gc func() redis.Conn) *Cache {
 	return c
 }
 
-// disable cache, call loader function for each call
+// Disable , disable cache, call loader function for each call
 func (c *Cache) Disable() {
 	c.disabled = true
 }
@@ -95,7 +92,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 	return c.rds.load(key, obj, ttl, f, true)
 }
 
-// notify all cache instances to delete cache key
+// Delete notify all cache instances to delete cache key
 func (c *Cache) Delete(key string) error {
 	// delete redis, then pub to delete cache
 	c.rds.delete(key)

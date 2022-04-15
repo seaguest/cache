@@ -1,4 +1,4 @@
-// inspired from https://github.com/patrickmn/go-cache
+// Package cache inspired from https://github.com/patrickmn/go-cache
 package cache
 
 import (
@@ -11,7 +11,7 @@ type MemCache struct {
 	ci    time.Duration
 }
 
-// memcache will scan all objects for every clean interval and delete expired key.
+// NewMemCache memcache will scan all objects for every clean interval and delete expired key.
 func NewMemCache(ci time.Duration) *MemCache {
 	c := &MemCache{
 		items: sync.Map{},
@@ -24,8 +24,8 @@ func NewMemCache(ci time.Duration) *MemCache {
 
 // return true if data is fresh
 func (c *MemCache) load(k string) (*Item, bool) {
-	it, exists := c.get(k)
-	if !exists {
+	it, ok := c.get(k)
+	if !ok {
 		return nil, false
 	}
 	return it, !it.Outdated()
@@ -33,15 +33,13 @@ func (c *MemCache) load(k string) (*Item, bool) {
 
 // get an item from the memcache. Returns the item or nil, and a bool indicating whether the key was found.
 func (c *MemCache) get(k string) (*Item, bool) {
-	tmp, found := c.items.Load(k)
-	if !found {
+	tmp, ok := c.items.Load(k)
+	if !ok {
 		return nil, false
 	}
 	item := tmp.(*Item)
-	if item.Expiration > 0 {
-		if time.Now().UnixNano() > item.Expiration {
-			return nil, false
-		}
+	if item.Expiration > 0 && item.Expiration < time.Now().Unix() {
+		return nil, false
 	}
 	return item, true
 }
@@ -68,7 +66,7 @@ func (c *MemCache) runJanitor() {
 	}
 }
 
-// Delete all expired items from the memcache.
+// DeleteExpired delete all expired items from the memcache.
 func (c *MemCache) DeleteExpired() {
 	c.items.Range(func(key, value interface{}) bool {
 		v := value.(*Item)

@@ -41,12 +41,15 @@ func Init(addrs []string, opts ...redis.DialOption) {
 }
 
 func GetKey(args ...interface{}) string {
+	if len(args) == 0 {
+		return ""
+	}
+
 	var buf bytes.Buffer
-	for i, k := range args {
+	buf.WriteString(fmt.Sprint(args[0]))
+	for _, k := range args[1:] {
+		buf.WriteString("_")
 		buf.WriteString(fmt.Sprint(k))
-		if i < len(args)-1 {
-			buf.WriteString("_")
-		}
 	}
 	return buf.String()
 }

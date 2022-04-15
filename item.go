@@ -9,13 +9,9 @@ type Item struct {
 	Expiration int64       `json:"expiration"` // expired keys will be deleted from redis.
 }
 
-// Returns true if data is outdated.
+// Outdated returns true if data is outdated.
 func (i *Item) Outdated() bool {
-	if i.Outdate == 0 {
-		return false
-	}
-
-	if i.Outdate < time.Now().UnixNano() {
+	if i.Outdate != 0 && i.Outdate < time.Now().Unix() {
 		return true
 	}
 	return false
@@ -25,8 +21,8 @@ func newItem(v interface{}, d int) *Item {
 	ttl := d
 	var od, e int64
 	if d > 0 {
-		od = time.Now().Add(time.Duration(d) * time.Second).UnixNano()
-		e = time.Now().Add(time.Duration(d*lazyFactor) * time.Second).UnixNano()
+		od = time.Now().Add(time.Duration(d) * time.Second).Unix()
+		e = time.Now().Add(time.Duration(d*lazyFactor) * time.Second).Unix()
 	}
 
 	return &Item{
