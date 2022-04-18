@@ -3,7 +3,7 @@ A lightweight high-performance distributed cache, a cache-aside pattern implemen
 
 Cache contains one global redis + multiple in-memory instances, data can't be synced among instances, but cache.Delete(key) can delete key from redis + all memory instances, which can be used to make data consistent among instances.
 
-Keys stay ttl in in-memory cache, lazyFactor(256 default)*ttl in redis.
+Keys stay ttl in in-memory cache, lazyFactor(64 default)*ttl in redis.
 
 Cache can be disabled (cache.Disable()), thus GetObject will call directly loader function.
 
