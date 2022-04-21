@@ -108,7 +108,8 @@ func TestCache(t *testing.T) {
 	v, e := getStruct(100)
 	log.Println(v, e)
 }
-
-
-
 ```
+
+### JetBrains
+
+Goland is an excellent IDE, thank JetBrains for their free Open Source licenses.
