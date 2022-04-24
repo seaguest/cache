@@ -22,7 +22,7 @@ func newItem(v interface{}, d int) *Item {
 	var od, e int64
 	if d > 0 {
 		od = time.Now().Add(time.Duration(d) * time.Second).Unix()
-		e = time.Now().Add(time.Duration(d*lazyFactor) * time.Second).Unix()
+		e = time.Now().Add(time.Duration(d*redisFactor) * time.Second).Unix()
 	}
 
 	return &Item{

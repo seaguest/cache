@@ -10,6 +10,8 @@ import (
 	"github.com/mna/redisc"
 )
 
+var redisFactor = 16 // set default redis factor to 16
+
 var cache *Cache
 
 func Init(addrs []string, opts ...redis.DialOption) {
@@ -36,7 +38,6 @@ func Init(addrs []string, opts ...redis.DialOption) {
 			return cluster.Get()
 		}
 	}
-
 	cache = New(getConn)
 }
 
@@ -64,4 +65,8 @@ func Disable() {
 
 func Delete(key string) error {
 	return cache.Delete(key)
+}
+
+func SetRedisFactor(factor int) {
+	redisFactor = factor
 }

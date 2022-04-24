@@ -99,7 +99,7 @@ func (c *RedisCache) load(key string, obj interface{}, ttl int, f LoadFunc, sync
 	// update memory cache
 	it := newItem(o, ttl)
 	redisTTL := 0
-	if it.Expiration != 0 {
+	if ttl > 0 {
 		redisTTL = int(it.Expiration - time.Now().Unix())
 	}
 

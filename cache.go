@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	lazyFactor    = 64
 	delKeyChannel = "delkey"
 	cleanInterval = time.Second * 10 // default memory cache clean interval
 )
