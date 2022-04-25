@@ -10,7 +10,7 @@ import (
 	"github.com/mna/redisc"
 )
 
-var redisFactor = 16 // set default redis factor to 16
+var redisFactor = 8 // set default redis factor to 8
 
 var cache *Cache
 
