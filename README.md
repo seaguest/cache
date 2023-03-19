@@ -1,54 +1,16 @@
 # cache
-A lightweight high-performance distributed cache, a cache-aside pattern implementation built on top of in-memory + redis.
+The library is a lightweight and high-performance distributed caching solution that implements the cache-aside pattern using a combination of in-memory and Redis data stores. The cache consists of one global Redis instance and multiple in-memory instances, with any data changes being synchronized across all instances.
 
-Cache contains one global redis + multiple in-memory instances, data can't be synced among instances, but cache.Delete(key) can delete key from redis + all memory instances, which can be used to make data consistent among instances.
+The library is designed to prioritize retrieving data from the in-memory cache first, followed by the Redis cache if the data is not found locally. If the data is still not found in either cache, the library will call a loader function to retrieve the data and store it in the cache for future access.
 
-Keys stay ttl in in-memory cache, lazyFactor(64 default)*ttl in redis.
+One of the key benefits of this library is its performance. By leveraging both in-memory and Redis caches, the library can quickly retrieve frequently accessed data without having to rely solely on network calls to Redis. Additionally, the use of a loader function allows for on-demand retrieval of data, reducing the need for expensive data preloading.
 
-Cache can be disabled (cache.Disable()), thus GetObject will call directly loader function.
+Overall, the library is an effective solution for implementing distributed caching in Go applications, offering a balance of performance and simplicity through its use of a cache-aside pattern and combination of in-memory and Redis data stores.
 
 ### Features
 
 * two-level cache
-* redis cluster support
-
-
-### Core code
-Keys will be checked firstly in in-memory cache then redis, if neither found, loader function will be called to return, data will be updated asynchronously if outdated.
-```bigquery
-func (c *Cache) GetObject(key string, obj interface{}, ttl int, f LoadFunc) error {
-	// is disabled, call loader function
-	if c.disabled {
-		o, err := f()
-		if err != nil {
-			return err
-		}
-		return copy(o, obj)
-	}
-	return c.getObject(key, obj, ttl, f)
-}
-
-func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) error {
-	v, ok := c.mem.get(key)
-	if ok {
-		if v.Outdated() {
-			dst := deepcopy.Copy(obj)
-			go c.syncMem(key, dst, ttl, f)
-		}
-		return copy(v.Object, obj)
-	}
-
-	v, ok = c.rds.get(key, obj)
-	if ok {
-		if v.Outdated() {
-			go c.rds.load(key, nil, ttl, f, false)
-		}
-		return copy(v.Object, obj)
-	}
-	return c.rds.load(key, obj, ttl, f, true)
-}
-```
-
+* data synchronized among instances.
 
 ### Installation
 
@@ -60,7 +22,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl int, f LoadFunc) erro
 ```github.com/seaguest/deepcopy```is adopted for deepcopy, returned value is deepcopied to avoid dirty data.
 please implement DeepCopy interface if you encounter deepcopy performance trouble.
 
-```bigquery
+```go
 func (p *TestStruct) DeepCopy() interface{} {
 	c := *p
 	return &c
@@ -69,13 +31,19 @@ func (p *TestStruct) DeepCopy() interface{} {
 
 ### Usage
 
-``` bigquery
-package cache
+``` go
+package cache_test
 
 import (
+	"context"
+	"fmt"
 	"log"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gomodule/redigo/redis"
+	"github.com/seaguest/cache"
 )
 
 type TestStruct struct {
@@ -88,24 +56,52 @@ func (p *TestStruct) DeepCopy() interface{} {
 	return &c
 }
 
-func getStruct(id uint32) (*TestStruct, error) {
-	key := GetKey("val", id)
+func getStruct(ctx context.Context, id uint32, cache *cache.Cache) (*TestStruct, error) {
 	var v TestStruct
-	err := GetObject(key, &v, 60, func() (interface{}, error) {
+	err := cache.GetObject(ctx, fmt.Sprintf("TestStruct:%d", id), &v, time.Second*3, func() (interface{}, error) {
 		// data fetch logic to be done here
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Millisecond * 1200 * 1)
 		return &TestStruct{Name: "test"}, nil
 	})
 	if err != nil {
-		log.Println(err)
+		fmt.Printf("%+v", err)
 		return nil, err
 	}
 	return &v, nil
 }
 
 func TestCache(t *testing.T) {
-	Init([]string{"127.0.0.1:6379"})
-	v, e := getStruct(100)
+
+	pool := &redis.Pool{
+		MaxIdle:     1000,
+		MaxActive:   1000,
+		Wait:        true,
+		IdleTimeout: 240 * time.Second,
+		TestOnBorrow: func(c redis.Conn, t time.Time) error {
+			_, err := c.Do("PING")
+			return err
+		},
+		Dial: func() (redis.Conn, error) {
+			return redis.Dial("tcp", "127.0.0.1:7379")
+		},
+	}
+
+	cfg := cache.Config{
+		GetConn: pool.Get,
+		GetObjectType: func(key string) string {
+			ss := strings.Split(key, ":")
+			return ss[0]
+		},
+		OnError: func(err error) {
+			log.Printf("%+v", err)
+		},
+	}
+
+	supercache := cache.New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel()
+	v, e := getStruct(ctx, 100, supercache)
 	log.Println(v, e)
 }
 ```

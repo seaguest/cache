@@ -1,27 +1,8 @@
 package cache
 
 import (
-	"time"
-
 	"github.com/gomodule/redigo/redis"
 )
-
-func getRedisPool(addr string, opts ...redis.DialOption) (*redis.Pool, error) {
-	pool := &redis.Pool{
-		MaxIdle:     1000,
-		MaxActive:   1000,
-		Wait:        true,
-		IdleTimeout: 240 * time.Second,
-		TestOnBorrow: func(c redis.Conn, t time.Time) error {
-			_, err := c.Do("PING")
-			return err
-		},
-		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", addr, opts...)
-		},
-	}
-	return pool, nil
-}
 
 func setString(key, value string, ttl int, conn redis.Conn) error {
 	defer conn.Close()

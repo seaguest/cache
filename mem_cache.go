@@ -22,26 +22,14 @@ func NewMemCache(ci time.Duration) *MemCache {
 	return c
 }
 
-// return true if data is fresh
-func (c *MemCache) load(k string) (*Item, bool) {
-	it, ok := c.get(k)
-	if !ok {
-		return nil, false
-	}
-	return it, !it.Outdated()
-}
-
 // get an item from the memcache. Returns the item or nil, and a bool indicating whether the key was found.
-func (c *MemCache) get(k string) (*Item, bool) {
+func (c *MemCache) get(k string) *Item {
 	tmp, ok := c.items.Load(k)
 	if !ok {
-		return nil, false
+		return nil
 	}
-	item := tmp.(*Item)
-	if item.Expiration > 0 && item.Expiration < time.Now().Unix() {
-		return nil, false
-	}
-	return item, true
+
+	return tmp.(*Item)
 }
 
 func (c *MemCache) set(k string, it *Item) {
@@ -72,7 +60,7 @@ func (c *MemCache) DeleteExpired() {
 		v := value.(*Item)
 		k := key.(string)
 		// delete outdated for memory cache
-		if v.Outdated() {
+		if v.ExpireAt != 0 && v.ExpireAt < time.Now().Unix() {
 			c.items.Delete(k)
 		}
 		return true
