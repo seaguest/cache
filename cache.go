@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,14 +14,9 @@ import (
 )
 
 var (
-	ErrIllegalTTL         = errors.New("illegal ttl, must be superior than second")
+	ErrIllegalTTL         = errors.New("illegal ttl, must be in seconds at least")
 	ErrUnknownObjectType  = errors.New("unknown object_type")
 	ErrConflictObjectType = errors.New("object_type conflict")
-)
-
-const (
-	keyNotificationChannel = "cache_key_notification_channel"
-	cleanInterval          = time.Second * 10 // default memory cache clean interval
 )
 
 type LoadFunc func() (interface{}, error)
@@ -44,19 +38,29 @@ type Cache struct {
 
 func New(cfg Config) *Cache {
 	c := &Cache{}
+
+	// set default namespace if missing
 	if cfg.Namespace == "" {
 		cfg.Namespace = "default"
 	}
-	if cfg.GetObjectType == nil {
-		cfg.GetObjectType = func(key string) string {
-			return strings.Split(key, ":")[0]
-		}
+
+	// set default RedisFactor to 4 if missing
+	if cfg.RedisFactor == 0 {
+		cfg.RedisFactor = 4
 	}
+
+	// set default CleanInterval to 10s if missing
+	if cfg.CleanInterval == 0 {
+		cfg.CleanInterval = time.Second * 10
+	} else if cfg.CleanInterval < time.Second {
+		panic("CleanInterval must be second at least")
+	}
+
 	if cfg.OnError == nil {
-		panic("must provide OnError function")
+		panic("need OnError for cache initialization")
 	}
 	c.cfg = cfg
-	c.mem = NewMemCache(cleanInterval)
+	c.mem = NewMemCache(cfg.CleanInterval)
 	c.rds = NewRedisCache(c.cfg, c.mem)
 
 	// subscribe key deletion
@@ -79,36 +83,29 @@ func (c *Cache) SetObject(ctx context.Context, key string, obj interface{}, ttl 
 	select {
 	case err = <-done:
 	case <-ctx.Done():
-		err = ctx.Err()
+		err = errors.WithStack(ctx.Err())
 	}
-	return errors.WithStack(err)
+	return err
 }
 
 func (c *Cache) setObject(key string, obj interface{}, ttl time.Duration) error {
 	if ttl > ttl.Truncate(time.Second) {
 		return errors.WithStack(ErrIllegalTTL)
 	}
-	ttlInSeconds := int(ttl / time.Second)
 
-	objectTypeName := c.cfg.GetObjectType(key)
-	// maintain the type mapping
-	objectType, ok := c.objectTypes.Load(objectTypeName)
-	if !ok {
-		c.objectTypes.Store(objectTypeName, &ObjectType{Type: obj, TTL: ttlInSeconds})
-	} else {
-		// check registered and current type, must be coherent
-		if reflect.TypeOf(objectType.(*ObjectType).Type) != reflect.TypeOf(obj) {
-			return errors.WithStack(ErrConflictObjectType)
-		}
+	objectTypeName := getObjectTypeName(obj)
+	err := c.checkObjectType(objectTypeName, obj, ttl)
+	if err != nil {
+		return err
 	}
 
 	key = c.getKey(key)
-	_, err, _ := c.sfg.Do(key, func() (interface{}, error) {
+	_, err, _ = c.sfg.Do(key, func() (interface{}, error) {
 		dst := deepcopy.Copy(obj)
-		it := newItem(obj, ttlInSeconds)
+		it := newItem(obj, ttl)
 		c.mem.set(key, it)
 
-		err := c.rds.set(objectTypeName, key, dst, ttlInSeconds)
+		err := c.rds.set(key, dst, ttl)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
@@ -137,9 +134,9 @@ func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl 
 	select {
 	case err = <-done:
 	case <-ctx.Done():
-		err = ctx.Err()
+		err = errors.WithStack(ctx.Err())
 	}
-	return errors.WithStack(err)
+	return err
 }
 
 func (c *Cache) report(metricType MetricType, objectType string) func() {
@@ -154,23 +151,16 @@ func (c *Cache) report(metricType MetricType, objectType string) func() {
 
 func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f LoadFunc) error {
 	if ttl > ttl.Truncate(time.Second) {
-		return ErrIllegalTTL
+		return errors.WithStack(ErrIllegalTTL)
 	}
-	ttlInSeconds := int(ttl / time.Second)
 
+	objectTypeName := getObjectTypeName(obj)
 	var metricType MetricType
-	defer c.report(metricType, c.cfg.GetObjectType(key))()
+	defer c.report(metricType, objectTypeName)()
 
-	objectTypeName := c.cfg.GetObjectType(key)
-	// maintain the type mapping
-	objectType, ok := c.objectTypes.Load(objectTypeName)
-	if !ok {
-		c.objectTypes.Store(objectTypeName, &ObjectType{Type: obj, TTL: ttlInSeconds})
-	} else {
-		// check registered and current type, must be coherent
-		if reflect.TypeOf(objectType.(*ObjectType).Type) != reflect.TypeOf(obj) {
-			return errors.WithStack(ErrConflictObjectType)
-		}
+	err := c.checkObjectType(objectTypeName, obj, ttl)
+	if err != nil {
+		return err
 	}
 
 	key = c.getKey(key)
@@ -180,7 +170,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f Load
 		if v.ExpireAt != 0 && v.ExpireAt < time.Now().Unix() {
 			metricType = MetricTypeMemHitExpired
 			go func() {
-				it, err := c.rds.load(objectTypeName, key, ttlInSeconds, f)
+				it, err := c.rds.load(key, ttl, f)
 				if err != nil {
 					c.cfg.OnError(errors.WithStack(err))
 					return
@@ -198,7 +188,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f Load
 			if v.ExpireAt != 0 && v.ExpireAt < time.Now().Unix() {
 				metricType = MetricTypeRedisHitExpired
 				go func() {
-					it, err := c.rds.load(objectTypeName, key, ttlInSeconds, f)
+					it, err := c.rds.load(key, ttl, f)
 					if err != nil {
 						c.cfg.OnError(errors.WithStack(err))
 						return
@@ -210,13 +200,13 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f Load
 		}
 
 		metricType = MetricTypeMiss
-		it, err := c.rds.load(objectTypeName, key, ttlInSeconds, f)
+		it, err := c.rds.load(key, ttl, f)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
 
 		c.notify(notificationTypeSet, objectTypeName, key, it.Object)
-		return it, err
+		return it, nil
 	})
 	if err != nil {
 		return errors.WithStack(err)
@@ -224,6 +214,20 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f Load
 
 	it := itf.(*Item)
 	return c.copy(it.Object, obj)
+}
+
+// checkObjectType register objectType or check if existing objectType match the current one.
+func (c *Cache) checkObjectType(objectTypeName string, obj interface{}, ttl time.Duration) error {
+	objectTyp, ok := c.objectTypes.Load(objectTypeName)
+	if !ok {
+		c.objectTypes.Store(objectTypeName, &objectType{Type: obj, TTL: ttl})
+	} else {
+		// check registered and current type, must be coherent
+		if reflect.TypeOf(objectTyp.(*objectType).Type) != reflect.TypeOf(obj) {
+			return errors.WithStack(ErrConflictObjectType)
+		}
+	}
+	return nil
 }
 
 // Delete notify all cache instances to delete cache key
@@ -251,7 +255,7 @@ func (c *Cache) subscribe(channel string) {
 	for {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
-			var msg NotificationMessage
+			var msg notificationMessage
 			if err := json.Unmarshal(v.Data, &msg); err != nil {
 				c.cfg.OnError(errors.WithStack(err))
 				continue
@@ -265,13 +269,13 @@ func (c *Cache) subscribe(channel string) {
 					continue
 				}
 
-				obj := deepcopy.Copy(objType.(*ObjectType).Type)
+				obj := deepcopy.Copy(objType.(*objectType).Type)
 				if err := json.Unmarshal([]byte(msg.Payload), obj); err != nil {
 					c.cfg.OnError(errors.WithStack(err))
 					continue
 				}
 
-				it := newItem(obj, objType.(*ObjectType).TTL)
+				it := newItem(obj, objType.(*objectType).TTL)
 				c.mem.set(msg.Key, it)
 			case notificationTypeDel:
 				c.mem.delete(msg.Key)
@@ -308,14 +312,14 @@ func (c *Cache) getKey(key string) string {
 }
 
 func (c *Cache) getNotifyChannel() string {
-	return fmt.Sprintf("%s:%s", c.cfg.Namespace, keyNotificationChannel)
+	return fmt.Sprintf("%s:cache_key_notification_channel", c.cfg.Namespace)
 }
 
 func (c *Cache) notify(notificationType notificationType, objectType string, key string, obj interface{}) {
 	bs, _ := json.Marshal(obj)
 
 	// publish message
-	msg := &NotificationMessage{
+	msg := &notificationMessage{
 		NotificationType: notificationType,
 		ObjectType:       objectType,
 		Key:              key,
@@ -324,4 +328,9 @@ func (c *Cache) notify(notificationType notificationType, objectType string, key
 
 	msgBody, _ := json.Marshal(msg)
 	publish(c.getNotifyChannel(), string(msgBody), c.cfg.GetConn())
+}
+
+// get the global unique id for a given object type.
+func getObjectTypeName(obj interface{}) string {
+	return fmt.Sprintf("%s/%s", reflect.TypeOf(obj).Elem().PkgPath(), reflect.TypeOf(obj).String())
 }

@@ -1,5 +1,7 @@
 package cache
 
+import "time"
+
 type notificationType int
 
 const (
@@ -7,14 +9,14 @@ const (
 	notificationTypeDel
 )
 
-type NotificationMessage struct {
+type notificationMessage struct {
 	NotificationType notificationType `json:"notification_type"`
 	ObjectType       string           `json:"object_type"`
 	Key              string           `json:"key"`
 	Payload          string           `json:"payload"`
 }
 
-type ObjectType struct {
+type objectType struct {
 	Type interface{}
-	TTL  int
+	TTL  time.Duration
 }

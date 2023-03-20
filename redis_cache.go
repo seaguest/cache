@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"time"
+
 	"github.com/gomodule/redigo/redis"
 	jsoniter "github.com/json-iterator/go"
 	"golang.org/x/sync/singleflight"
@@ -44,14 +46,14 @@ func (c *RedisCache) get(key string, obj interface{}) (*Item, error) {
 }
 
 // read item from redis
-func (c *RedisCache) set(objectType, key string, obj interface{}, ttl int) error {
+func (c *RedisCache) set(key string, obj interface{}, ttl time.Duration) error {
 	bs, _ := json.Marshal(obj)
-	return setString(key, string(bs), ttl, c.cfg.GetConn())
+	return setString(key, string(bs), int(ttl/time.Second), c.cfg.GetConn())
 }
 
 // load redis with loader function
 // when sync is true, obj must be set before return.
-func (c *RedisCache) load(objectType, key string, ttl int, f LoadFunc) (*Item, error) {
+func (c *RedisCache) load(key string, ttl time.Duration, f LoadFunc) (*Item, error) {
 	loadingKey := key + "_loading"
 	itf, err, _ := c.sfg.Do(loadingKey, func() (interface{}, error) {
 		o, err := f()
@@ -62,7 +64,7 @@ func (c *RedisCache) load(objectType, key string, ttl int, f LoadFunc) (*Item, e
 		it := newItem(o, ttl)
 		redisTTL := 0
 		if ttl > 0 {
-			redisTTL = ttl * 4
+			redisTTL = int(ttl/time.Second) * c.cfg.RedisFactor
 		}
 
 		bs, _ := json.Marshal(it)

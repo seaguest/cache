@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"testing"
 	"time"
 
@@ -37,7 +36,6 @@ func getStruct(ctx context.Context, id uint32, cache *cache.Cache) (*TestStruct,
 }
 
 func TestCache(t *testing.T) {
-
 	pool := &redis.Pool{
 		MaxIdle:     1000,
 		MaxActive:   1000,
@@ -54,9 +52,8 @@ func TestCache(t *testing.T) {
 
 	cfg := cache.Config{
 		GetConn: pool.Get,
-		GetObjectType: func(key string) string {
-			ss := strings.Split(key, ":")
-			return ss[0]
+		OnMetric: func(metric cache.MetricType, objectType string, elapsedTime int) {
+			// obtain metrics here
 		},
 		OnError: func(err error) {
 			log.Printf("%+v", err)

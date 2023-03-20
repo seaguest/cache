@@ -1,16 +1,17 @@
 # cache
-The library is a lightweight and high-performance distributed caching solution that implements the cache-aside pattern using a combination of in-memory and Redis data stores. The cache consists of one global Redis instance and multiple in-memory instances, with any data changes being synchronized across all instances.
+A lightweight and high-performance distributed caching, a cache-aside pattern implementation built on top of in-memory + Redis. The cache consists of one global Redis instance and multiple in-memory instances, with any data changes being synchronized across all instances.
 
 The library is designed to prioritize retrieving data from the in-memory cache first, followed by the Redis cache if the data is not found locally. If the data is still not found in either cache, the library will call a loader function to retrieve the data and store it in the cache for future access.
 
 One of the key benefits of this library is its performance. By leveraging both in-memory and Redis caches, the library can quickly retrieve frequently accessed data without having to rely solely on network calls to Redis. Additionally, the use of a loader function allows for on-demand retrieval of data, reducing the need for expensive data preloading.
 
-Overall, the library is an effective solution for implementing distributed caching in Go applications, offering a balance of performance and simplicity through its use of a cache-aside pattern and combination of in-memory and Redis data stores.
+![alt text](./assets/cache.png "cache-aside pattern")
 
 ### Features
 
 * two-level cache
-* data synchronized among instances.
+* data synchronization
+* metrics
 
 ### Installation
 
@@ -38,7 +39,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"testing"
 	"time"
 
@@ -71,7 +71,6 @@ func getStruct(ctx context.Context, id uint32, cache *cache.Cache) (*TestStruct,
 }
 
 func TestCache(t *testing.T) {
-
 	pool := &redis.Pool{
 		MaxIdle:     1000,
 		MaxActive:   1000,
@@ -88,9 +87,8 @@ func TestCache(t *testing.T) {
 
 	cfg := cache.Config{
 		GetConn: pool.Get,
-		GetObjectType: func(key string) string {
-			ss := strings.Split(key, ":")
-			return ss[0]
+		OnMetric: func(metric cache.MetricType, objectType string, elapsedTime int) {
+			// obtain metrics here
 		},
 		OnError: func(err error) {
 			log.Printf("%+v", err)
