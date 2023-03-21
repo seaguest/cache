@@ -20,3 +20,7 @@ func newItem(v interface{}, ttl time.Duration) *Item {
 		ExpireAt: expiredAt,
 	}
 }
+
+func (it *Item) Expired() bool {
+	return it.ExpireAt != 0 && it.ExpireAt < time.Now().Unix()
+}

@@ -14,9 +14,8 @@ import (
 )
 
 var (
-	ErrIllegalTTL         = errors.New("illegal ttl, must be in seconds at least")
-	ErrUnknownObjectType  = errors.New("unknown object_type")
-	ErrConflictObjectType = errors.New("object_type conflict")
+	ErrIllegalTTL              = errors.New("illegal ttl, must be in seconds at least")
+	ErrObjectTypeNotRegistered = errors.New("object_type not registered")
 )
 
 type LoadFunc func() (interface{}, error)
@@ -28,12 +27,17 @@ type Cache struct {
 	objectTypes sync.Map
 
 	// rds cache, handles redis level cache
-	rds *RedisCache
+	rds *redisCache
 
 	// mem cache, handles in-memory cache
-	mem *MemCache
+	mem *memCache
 
 	sfg singleflight.Group
+}
+
+type objectType struct {
+	Type interface{}
+	TTL  time.Duration
 }
 
 func New(cfg Config) *Cache {
@@ -60,11 +64,9 @@ func New(cfg Config) *Cache {
 		panic("need OnError for cache initialization")
 	}
 	c.cfg = cfg
-	c.mem = NewMemCache(cfg.CleanInterval)
-	c.rds = NewRedisCache(c.cfg, c.mem)
-
-	// subscribe key deletion
-	go c.subscribe(c.getNotifyChannel())
+	c.mem = newMemCache(cfg.CleanInterval)
+	c.rds = newRedisCache(cfg.GetConn, cfg.RedisFactor)
+	go c.watch()
 	return c
 }
 
@@ -93,23 +95,22 @@ func (c *Cache) setObject(key string, obj interface{}, ttl time.Duration) error 
 		return errors.WithStack(ErrIllegalTTL)
 	}
 
-	objectTypeName := getObjectTypeName(obj)
-	err := c.checkObjectType(objectTypeName, obj, ttl)
-	if err != nil {
-		return err
-	}
+	objectTypeName := getObjectType(obj)
+	c.registerObjectType(objectTypeName, obj, ttl)
 
 	key = c.getKey(key)
-	_, err, _ = c.sfg.Do(key, func() (interface{}, error) {
-		dst := deepcopy.Copy(obj)
-		it := newItem(obj, ttl)
-		c.mem.set(key, it)
-
-		err := c.rds.set(key, dst, ttl)
+	_, err, _ := c.sfg.Do(key+"set", func() (interface{}, error) {
+		_, err := c.rds.set(key, obj, ttl)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
-		c.notify(notificationTypeSet, objectTypeName, key, obj)
+
+		c.notify(&notification{
+			Type:       notificationTypeSet,
+			ObjectType: objectTypeName,
+			Key:        key,
+			Object:     obj,
+		})
 		return nil, nil
 	})
 	return err
@@ -139,12 +140,12 @@ func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl 
 	return err
 }
 
-func (c *Cache) report(metricType MetricType, objectType string) func() {
+func (c *Cache) onMetric(metricType MetricType, objectType string) func() {
 	start := time.Now()
 	return func() {
-		elapsedInMillis := time.Since(start).Milliseconds()
+		elapsedInMicros := time.Since(start).Microseconds()
 		if c.cfg.OnMetric != nil {
-			c.cfg.OnMetric(metricType, objectType, int(elapsedInMillis))
+			c.cfg.OnMetric(metricType, objectType, int(elapsedInMicros))
 		}
 	}
 }
@@ -154,80 +155,102 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f Load
 		return errors.WithStack(ErrIllegalTTL)
 	}
 
-	objectTypeName := getObjectTypeName(obj)
+	objType := getObjectType(obj)
 	var metricType MetricType
-	defer c.report(metricType, objectTypeName)()
+	defer c.onMetric(metricType, objType)()
+	c.registerObjectType(objType, obj, ttl)
 
-	err := c.checkObjectType(objectTypeName, obj, ttl)
-	if err != nil {
-		return err
-	}
-
-	key = c.getKey(key)
-	v := c.mem.get(key)
-	if v != nil {
-		metricType = MetricTypeMemHit
-		if v.ExpireAt != 0 && v.ExpireAt < time.Now().Unix() {
-			metricType = MetricTypeMemHitExpired
+	defer func() {
+		// if hit but expired, then do a fresh load
+		if metricType == MetricTypeMemHitExpired || metricType == MetricTypeRedisHitExpired {
 			go func() {
-				it, err := c.rds.load(key, ttl, f)
+				_, err := c.resetObject(key, ttl, f)
 				if err != nil {
 					c.cfg.OnError(errors.WithStack(err))
 					return
 				}
-				c.notify(notificationTypeSet, objectTypeName, key, it.Object)
 			}()
 		}
-		return c.copy(v.Object, obj)
-	}
+	}()
 
-	itf, err, _ := c.sfg.Do(key, func() (interface{}, error) {
-		v, err := c.rds.get(key, obj)
+	key = c.getKey(key)
+	itf, err, _ := c.sfg.Do(key+"_get", func() (interface{}, error) {
+		// try to retrieve from local cache, return if found
+		v := c.mem.get(key)
 		if v != nil {
-			metricType = MetricTypeRedisHit
-			if v.ExpireAt != 0 && v.ExpireAt < time.Now().Unix() {
+			if !v.Expired() {
+				metricType = MetricTypeMemHit
+			} else {
+				metricType = MetricTypeMemHitExpired
+			}
+			return v, nil
+		}
+
+		// try to retrieve from redis, return if found
+		v, err := c.rds.get(key, obj)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		if v != nil {
+			if !v.Expired() {
+				metricType = MetricTypeRedisHit
+				// update memory cache since it is not previously found in mem
+				c.mem.set(key, v)
+			} else {
 				metricType = MetricTypeRedisHitExpired
-				go func() {
-					it, err := c.rds.load(key, ttl, f)
-					if err != nil {
-						c.cfg.OnError(errors.WithStack(err))
-						return
-					}
-					c.notify(notificationTypeSet, objectTypeName, key, it.Object)
-				}()
 			}
 			return v, nil
 		}
 
 		metricType = MetricTypeMiss
-		it, err := c.rds.load(key, ttl, f)
+		it, err := c.resetObject(key, ttl, f)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		return it, nil
+	})
+
+	if err != nil {
+		return err
+	}
+	return c.copy(itf.(*Item).Object, obj)
+}
+
+// resetObject load fresh data to redis and in-memory with loader function
+func (c *Cache) resetObject(key string, ttl time.Duration, f LoadFunc) (*Item, error) {
+	it, err, _ := c.sfg.Do(key+"_reset", func() (interface{}, error) {
+		o, err := f()
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
 
-		c.notify(notificationTypeSet, objectTypeName, key, it.Object)
+		it, err := c.rds.set(key, o, ttl)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+
+		// notify
+		c.notify(&notification{
+			Type:       notificationTypeSet,
+			ObjectType: getObjectType(o),
+			Key:        key,
+			Object:     o,
+		})
+
 		return it, nil
 	})
 	if err != nil {
-		return errors.WithStack(err)
+		return nil, err
 	}
-
-	it := itf.(*Item)
-	return c.copy(it.Object, obj)
+	return it.(*Item), nil
 }
 
-// checkObjectType register objectType or check if existing objectType match the current one.
-func (c *Cache) checkObjectType(objectTypeName string, obj interface{}, ttl time.Duration) error {
-	objectTyp, ok := c.objectTypes.Load(objectTypeName)
+// registerObjectType register objectType or check if existing objectType match the current one.
+func (c *Cache) registerObjectType(objectTypeName string, obj interface{}, ttl time.Duration) {
+	_, ok := c.objectTypes.Load(objectTypeName)
 	if !ok {
 		c.objectTypes.Store(objectTypeName, &objectType{Type: obj, TTL: ttl})
-	} else {
-		// check registered and current type, must be coherent
-		if reflect.TypeOf(objectTyp.(*objectType).Type) != reflect.TypeOf(obj) {
-			return errors.WithStack(ErrConflictObjectType)
-		}
 	}
-	return nil
 }
 
 // Delete notify all cache instances to delete cache key
@@ -237,53 +260,13 @@ func (c *Cache) Delete(objectType, key string) error {
 		return errors.WithStack(err)
 	}
 
-	c.notify(notificationTypeSet, objectType, key, nil)
+	c.notify(&notification{
+		Type:       notificationTypeSet,
+		ObjectType: objectType,
+		Key:        key,
+		Object:     nil,
+	})
 	return nil
-}
-
-// redis subscriber for key deletion, delete keys in memory
-func (c *Cache) subscribe(channel string) {
-	conn := c.cfg.GetConn()
-	defer conn.Close()
-
-	psc := redis.PubSubConn{Conn: conn}
-	if err := psc.Subscribe(channel); err != nil {
-		c.cfg.OnError(errors.WithStack(err))
-		return
-	}
-
-	for {
-		switch v := psc.Receive().(type) {
-		case redis.Message:
-			var msg notificationMessage
-			if err := json.Unmarshal(v.Data, &msg); err != nil {
-				c.cfg.OnError(errors.WithStack(err))
-				continue
-			}
-
-			switch msg.NotificationType {
-			case notificationTypeSet:
-				objType, ok := c.objectTypes.Load(msg.ObjectType)
-				if !ok {
-					c.cfg.OnError(errors.WithStack(ErrUnknownObjectType))
-					continue
-				}
-
-				obj := deepcopy.Copy(objType.(*objectType).Type)
-				if err := json.Unmarshal([]byte(msg.Payload), obj); err != nil {
-					c.cfg.OnError(errors.WithStack(err))
-					continue
-				}
-
-				it := newItem(obj, objType.(*objectType).TTL)
-				c.mem.set(msg.Key, it)
-			case notificationTypeDel:
-				c.mem.delete(msg.Key)
-			}
-		case error:
-			c.cfg.OnError(errors.WithStack(v))
-		}
-	}
 }
 
 // copy object to return, to avoid dirty data
@@ -307,30 +290,95 @@ func (c *Cache) copy(src, dst interface{}) (err error) {
 	return
 }
 
+// get the global unique id for a given object type.
+func getObjectType(obj interface{}) string {
+	return fmt.Sprintf("%s/%s", reflect.TypeOf(obj).Elem().PkgPath(), reflect.TypeOf(obj).String())
+}
+
 func (c *Cache) getKey(key string) string {
 	return fmt.Sprintf("%s:%s", c.cfg.Namespace, key)
+}
+
+type notificationType int
+
+const (
+	notificationTypeSet notificationType = iota // notificationTypeSet == 0
+	notificationTypeDel
+)
+
+type notification struct {
+	Type       notificationType `json:"type"`
+	ObjectType string           `json:"object_type"`
+	Object     interface{}      `json:"-"`
+	Key        string           `json:"key"`
+	Payload    string           `json:"payload"`
 }
 
 func (c *Cache) getNotifyChannel() string {
 	return fmt.Sprintf("%s:cache_key_notification_channel", c.cfg.Namespace)
 }
 
-func (c *Cache) notify(notificationType notificationType, objectType string, key string, obj interface{}) {
-	bs, _ := json.Marshal(obj)
+// watch the cache update
+func (c *Cache) watch() {
+	conn := c.cfg.GetConn()
+	defer conn.Close()
 
-	// publish message
-	msg := &notificationMessage{
-		NotificationType: notificationType,
-		ObjectType:       objectType,
-		Key:              key,
-		Payload:          string(bs),
+	psc := redis.PubSubConn{Conn: conn}
+	if err := psc.Subscribe(c.getNotifyChannel()); err != nil {
+		c.cfg.OnError(errors.WithStack(err))
+		return
 	}
 
-	msgBody, _ := json.Marshal(msg)
-	publish(c.getNotifyChannel(), string(msgBody), c.cfg.GetConn())
+	for {
+		switch v := psc.Receive().(type) {
+		case redis.Message:
+			var msg notification
+			if err := json.Unmarshal(v.Data, &msg); err != nil {
+				c.cfg.OnError(errors.WithStack(err))
+				continue
+			}
+			c.onNotification(&msg)
+		case error:
+			c.cfg.OnError(errors.WithStack(v))
+		}
+	}
 }
 
-// get the global unique id for a given object type.
-func getObjectTypeName(obj interface{}) string {
-	return fmt.Sprintf("%s/%s", reflect.TypeOf(obj).Elem().PkgPath(), reflect.TypeOf(obj).String())
+func (c *Cache) notify(ntf *notification) {
+	bs, err := json.Marshal(ntf.Object)
+	if err != nil {
+		c.cfg.OnError(errors.WithStack(err))
+	}
+	ntf.Payload = string(bs)
+
+	msgBody, err := json.Marshal(ntf)
+	if err != nil {
+		c.cfg.OnError(errors.WithStack(err))
+	}
+	err = publish(c.getNotifyChannel(), string(msgBody), c.cfg.GetConn())
+	if err != nil {
+		c.cfg.OnError(errors.WithStack(err))
+	}
+}
+
+func (c *Cache) onNotification(ntf *notification) {
+	switch ntf.Type {
+	case notificationTypeSet:
+		objType, ok := c.objectTypes.Load(ntf.ObjectType)
+		if !ok {
+			c.cfg.OnError(errors.Wrapf(ErrObjectTypeNotRegistered, ntf.ObjectType))
+			break
+		}
+
+		obj := deepcopy.Copy(objType.(*objectType).Type)
+		if err := json.Unmarshal([]byte(ntf.Payload), obj); err != nil {
+			c.cfg.OnError(errors.WithStack(err))
+			break
+		}
+
+		it := newItem(obj, objType.(*objectType).TTL)
+		c.mem.set(ntf.Key, it)
+	case notificationTypeDel:
+		c.mem.delete(ntf.Key)
+	}
 }
