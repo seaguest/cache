@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	ErrIllegalTTL              = errors.New("illegal ttl, must be in seconds at least")
+	ErrIllegalTTL              = errors.New("illegal ttl, must be in second/minute/hour")
 	ErrObjectTypeNotRegistered = errors.New("object_type not registered")
 )
 
@@ -23,7 +23,7 @@ type LoadFunc func() (interface{}, error)
 type Cache struct {
 	cfg Config
 
-	// store the type<->object type mapping
+	// store the import path(pkg_path+type)<->object mapping
 	objectTypes sync.Map
 
 	// rds cache, handles redis level cache
@@ -35,9 +35,10 @@ type Cache struct {
 	sfg singleflight.Group
 }
 
+// stores the object type and its ttl in memory
 type objectType struct {
-	Type interface{}
-	TTL  time.Duration
+	typ interface{}
+	ttl time.Duration
 }
 
 func New(cfg Config) *Cache {
@@ -95,8 +96,8 @@ func (c *Cache) setObject(key string, obj interface{}, ttl time.Duration) error 
 		return errors.WithStack(ErrIllegalTTL)
 	}
 
-	objectTypeName := getObjectType(obj)
-	c.registerObjectType(objectTypeName, obj, ttl)
+	objType := getObjectType(obj)
+	c.registerObjectType(objType, obj, ttl)
 
 	key = c.getKey(key)
 	_, err, _ := c.sfg.Do(key+"set", func() (interface{}, error) {
@@ -107,7 +108,7 @@ func (c *Cache) setObject(key string, obj interface{}, ttl time.Duration) error 
 
 		c.notify(&notification{
 			Type:       notificationTypeSet,
-			ObjectType: objectTypeName,
+			ObjectType: objType,
 			Key:        key,
 			Object:     obj,
 		})
@@ -121,9 +122,9 @@ func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl 
 	if c.cfg.Disabled {
 		o, err := f()
 		if err != nil {
-			return errors.WithStack(err)
+			return err
 		}
-		return errors.WithStack(c.copy(o, obj))
+		return c.copy(o, obj)
 	}
 
 	done := make(chan error)
@@ -150,7 +151,7 @@ func (c *Cache) onMetric(metricType MetricType, objectType string) func() {
 	}
 }
 
-func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f LoadFunc) error {
+func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f LoadFunc) (err error) {
 	if ttl > ttl.Truncate(time.Second) {
 		return errors.WithStack(ErrIllegalTTL)
 	}
@@ -160,13 +161,19 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f Load
 	defer c.onMetric(metricType, objType)()
 	c.registerObjectType(objType, obj, ttl)
 
+	var it *Item
 	defer func() {
+		// deepcopy before return
+		if err == nil {
+			err = c.copy(it.Object, obj)
+		}
+
 		// if hit but expired, then do a fresh load
 		if metricType == MetricTypeMemHitExpired || metricType == MetricTypeRedisHitExpired {
 			go func() {
-				_, err := c.resetObject(key, ttl, f)
-				if err != nil {
-					c.cfg.OnError(errors.WithStack(err))
+				_, resetErr := c.resetObject(key, ttl, f)
+				if resetErr != nil {
+					c.cfg.OnError(errors.WithStack(resetErr))
 					return
 				}
 			}()
@@ -174,22 +181,23 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f Load
 	}()
 
 	key = c.getKey(key)
-	itf, err, _ := c.sfg.Do(key+"_get", func() (interface{}, error) {
-		// try to retrieve from local cache, return if found
-		v := c.mem.get(key)
-		if v != nil {
-			if !v.Expired() {
-				metricType = MetricTypeMemHit
-			} else {
-				metricType = MetricTypeMemHitExpired
-			}
-			return v, nil
+	// try to retrieve from local cache, return if found
+	it = c.mem.get(key)
+	if it != nil {
+		if !it.Expired() {
+			metricType = MetricTypeMemHit
+		} else {
+			metricType = MetricTypeMemHitExpired
 		}
+		return
+	}
 
+	var itf interface{}
+	itf, err, _ = c.sfg.Do(key+"_get", func() (interface{}, error) {
 		// try to retrieve from redis, return if found
-		v, err := c.rds.get(key, obj)
-		if err != nil {
-			return nil, errors.WithStack(err)
+		v, redisErr := c.rds.get(key, obj)
+		if redisErr != nil {
+			return nil, errors.WithStack(redisErr)
 		}
 		if v != nil {
 			if !v.Expired() {
@@ -203,17 +211,13 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f Load
 		}
 
 		metricType = MetricTypeMiss
-		it, err := c.resetObject(key, ttl, f)
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
-		return it, nil
+		return c.resetObject(key, ttl, f)
 	})
-
 	if err != nil {
-		return err
+		return
 	}
-	return c.copy(itf.(*Item).Object, obj)
+	it = itf.(*Item)
+	return
 }
 
 // resetObject load fresh data to redis and in-memory with loader function
@@ -221,7 +225,7 @@ func (c *Cache) resetObject(key string, ttl time.Duration, f LoadFunc) (*Item, e
 	it, err, _ := c.sfg.Do(key+"_reset", func() (interface{}, error) {
 		o, err := f()
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, err
 		}
 
 		it, err := c.rds.set(key, o, ttl)
@@ -249,20 +253,21 @@ func (c *Cache) resetObject(key string, ttl time.Duration, f LoadFunc) (*Item, e
 func (c *Cache) registerObjectType(objectTypeName string, obj interface{}, ttl time.Duration) {
 	_, ok := c.objectTypes.Load(objectTypeName)
 	if !ok {
-		c.objectTypes.Store(objectTypeName, &objectType{Type: obj, TTL: ttl})
+		c.objectTypes.Store(objectTypeName, &objectType{typ: obj, ttl: ttl})
 	}
 }
 
 // Delete notify all cache instances to delete cache key
-func (c *Cache) Delete(objectType, key string) error {
+func (c *Cache) Delete(key string, obj interface{}) error {
+	objType := getObjectType(obj)
 	// delete redis, then pub to delete cache
 	if err := c.rds.delete(key); err != nil {
 		return errors.WithStack(err)
 	}
 
 	c.notify(&notification{
-		Type:       notificationTypeSet,
-		ObjectType: objectType,
+		Type:       notificationTypeDel,
+		ObjectType: objType,
 		Key:        key,
 		Object:     nil,
 	})
@@ -309,13 +314,13 @@ const (
 type notification struct {
 	Type       notificationType `json:"type"`
 	ObjectType string           `json:"object_type"`
-	Object     interface{}      `json:"-"`
 	Key        string           `json:"key"`
+	Object     interface{}      `json:"-"`
 	Payload    string           `json:"payload"`
 }
 
-func (c *Cache) getNotifyChannel() string {
-	return fmt.Sprintf("%s:cache_key_notification_channel", c.cfg.Namespace)
+func (c *Cache) getNotificationChannel() string {
+	return fmt.Sprintf("%s:notification_channel", c.cfg.Namespace)
 }
 
 // watch the cache update
@@ -324,7 +329,7 @@ func (c *Cache) watch() {
 	defer conn.Close()
 
 	psc := redis.PubSubConn{Conn: conn}
-	if err := psc.Subscribe(c.getNotifyChannel()); err != nil {
+	if err := psc.Subscribe(c.getNotificationChannel()); err != nil {
 		c.cfg.OnError(errors.WithStack(err))
 		return
 	}
@@ -344,23 +349,6 @@ func (c *Cache) watch() {
 	}
 }
 
-func (c *Cache) notify(ntf *notification) {
-	bs, err := json.Marshal(ntf.Object)
-	if err != nil {
-		c.cfg.OnError(errors.WithStack(err))
-	}
-	ntf.Payload = string(bs)
-
-	msgBody, err := json.Marshal(ntf)
-	if err != nil {
-		c.cfg.OnError(errors.WithStack(err))
-	}
-	err = publish(c.getNotifyChannel(), string(msgBody), c.cfg.GetConn())
-	if err != nil {
-		c.cfg.OnError(errors.WithStack(err))
-	}
-}
-
 func (c *Cache) onNotification(ntf *notification) {
 	switch ntf.Type {
 	case notificationTypeSet:
@@ -370,15 +358,46 @@ func (c *Cache) onNotification(ntf *notification) {
 			break
 		}
 
-		obj := deepcopy.Copy(objType.(*objectType).Type)
+		obj := deepcopy.Copy(objType.(*objectType).typ)
 		if err := json.Unmarshal([]byte(ntf.Payload), obj); err != nil {
 			c.cfg.OnError(errors.WithStack(err))
 			break
 		}
 
-		it := newItem(obj, objType.(*objectType).TTL)
+		it := newItem(obj, objType.(*objectType).ttl)
 		c.mem.set(ntf.Key, it)
 	case notificationTypeDel:
 		c.mem.delete(ntf.Key)
+	}
+}
+
+func (c *Cache) notify(ntf *notification) {
+	bs, err := json.Marshal(ntf.Object)
+	if err != nil {
+		c.cfg.OnError(errors.WithStack(err))
+		return
+	}
+	ntf.Payload = string(bs)
+
+	msgBody, err := json.Marshal(ntf)
+	if err != nil {
+		c.cfg.OnError(errors.WithStack(err))
+		return
+	}
+
+	conn := c.cfg.GetConn()
+	defer func() {
+		if err == nil {
+			err = conn.Close()
+			if err != nil {
+				c.cfg.OnError(errors.WithStack(err))
+			}
+		}
+	}()
+
+	_, err = conn.Do("PUBLISH", c.getNotificationChannel(), string(msgBody))
+	if err != nil {
+		c.cfg.OnError(errors.WithStack(err))
+		return
 	}
 }

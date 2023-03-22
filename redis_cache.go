@@ -24,7 +24,7 @@ func newRedisCache(getConn func() redis.Conn, redisFactor int) *redisCache {
 
 // read item from redis
 func (c *redisCache) get(key string, obj interface{}) (*Item, error) {
-	body, err := getString(key, c.getConn())
+	body, err := c.getString(key)
 	if err != nil {
 		if err == redis.ErrNil {
 			return nil, nil
@@ -54,13 +54,49 @@ func (c *redisCache) set(key string, obj interface{}, ttl time.Duration) (*Item,
 		return nil, err
 	}
 
-	err = setString(key, string(bs), redisTTL, c.getConn())
+	err = c.setString(key, string(bs), redisTTL)
 	if err != nil {
 		return nil, err
 	}
 	return it, nil
 }
 
-func (c *redisCache) delete(key string) error {
-	return delete(key, c.getConn())
+func (c *redisCache) delete(key string) (err error) {
+	conn := c.getConn()
+	defer func() {
+		if err == nil {
+			err = conn.Close()
+		}
+	}()
+
+	_, err = conn.Do("DEL", key)
+	return
+}
+
+func (c *redisCache) setString(key, value string, ttl int) (err error) {
+	conn := c.getConn()
+	defer func() {
+		if err == nil {
+			err = conn.Close()
+		}
+	}()
+
+	if ttl == 0 {
+		_, err = conn.Do("SET", key, value)
+	} else {
+		_, err = conn.Do("SETEX", key, ttl, value)
+	}
+	return
+}
+
+func (c *redisCache) getString(key string) (value string, err error) {
+	conn := c.getConn()
+	defer func() {
+		if err == nil {
+			err = conn.Close()
+		}
+	}()
+
+	value, err = redis.String(conn.Do("GET", key))
+	return
 }

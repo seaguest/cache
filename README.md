@@ -7,16 +7,25 @@ One of the key benefits of this library is its performance. By leveraging both i
 
 ![alt text](./assets/cache.png "cache-aside pattern")
 
-### Features
-
-* two-level cache
-* data synchronization
-* metrics
+## Features
+- **Two-level cache** : in-memory cache first, redis-backed
+- **Easy to use** : simple api with minimum configuration.
+- **Data consistency** : all in-memory instances will be notified by `Pub-Sub` if any value gets updated, redis and in-memory will keep consistent.
+- **Concurrency**: singleflight is used to avoid cache breakdown.
+- **Metrics** : provide callback function to measure the cache metrics.
 
 ### Installation
 
 `go get -u github.com/seaguest/cache`
 
+### API
+```go
+func (c *Cache) SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error 
+
+func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f LoadFunc) error 
+
+func (c *Cache) Delete(key string, obj interface{}) erro
+```
 
 ### Tips
 
