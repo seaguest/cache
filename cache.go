@@ -141,16 +141,6 @@ func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl 
 	return err
 }
 
-func (c *Cache) onMetric(metricType MetricType, objectType string) func() {
-	start := time.Now()
-	return func() {
-		elapsedInMicros := time.Since(start).Microseconds()
-		if c.cfg.OnMetric != nil {
-			c.cfg.OnMetric(metricType, objectType, int(elapsedInMicros))
-		}
-	}
-}
-
 func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f LoadFunc) (err error) {
 	if ttl > ttl.Truncate(time.Second) {
 		return errors.WithStack(ErrIllegalTTL)
@@ -249,6 +239,20 @@ func (c *Cache) resetObject(key string, ttl time.Duration, f LoadFunc) (*Item, e
 	return it.(*Item), nil
 }
 
+// Delete notify all cache instances to delete cache key
+func (c *Cache) Delete(key string) error {
+	// delete redis, then pub to delete cache
+	if err := c.rds.delete(key); err != nil {
+		return errors.WithStack(err)
+	}
+
+	c.notify(&notification{
+		Type: notificationTypeDel,
+		Key:  key,
+	})
+	return nil
+}
+
 // registerObjectType register objectType or check if existing objectType match the current one.
 func (c *Cache) registerObjectType(objectTypeName string, obj interface{}, ttl time.Duration) {
 	_, ok := c.objectTypes.Load(objectTypeName)
@@ -257,21 +261,14 @@ func (c *Cache) registerObjectType(objectTypeName string, obj interface{}, ttl t
 	}
 }
 
-// Delete notify all cache instances to delete cache key
-func (c *Cache) Delete(key string, obj interface{}) error {
-	objType := getObjectType(obj)
-	// delete redis, then pub to delete cache
-	if err := c.rds.delete(key); err != nil {
-		return errors.WithStack(err)
+func (c *Cache) onMetric(metricType MetricType, objectType string) func() {
+	start := time.Now()
+	return func() {
+		elapsedInMicros := time.Since(start).Microseconds()
+		if c.cfg.OnMetric != nil {
+			c.cfg.OnMetric(metricType, objectType, int(elapsedInMicros))
+		}
 	}
-
-	c.notify(&notification{
-		Type:       notificationTypeDel,
-		ObjectType: objType,
-		Key:        key,
-		Object:     nil,
-	})
-	return nil
 }
 
 // copy object to return, to avoid dirty data
