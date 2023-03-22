@@ -24,7 +24,7 @@ func (c *Cache) SetObject(ctx context.Context, key string, obj interface{}, ttl 
 
 func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f LoadFunc) error 
 
-func (c *Cache) Delete(key string, obj interface{}) erro
+func (c *Cache) Delete(key string, obj interface{}) error
 ```
 
 ### Tips
