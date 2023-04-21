@@ -14,14 +14,13 @@ import (
 )
 
 var (
-	ErrIllegalTTL              = errors.New("illegal ttl, must be in second/minute/hour")
-	ErrObjectTypeNotRegistered = errors.New("object_type not registered")
+	ErrIllegalTTL = errors.New("illegal ttl, must be in second/minute/hour")
 )
 
 type LoadFunc func() (interface{}, error)
 
 type Cache struct {
-	cfg Config
+	options Options
 
 	// store the import path(pkg_path+type)<->object mapping
 	objectTypes sync.Map
@@ -41,39 +40,41 @@ type objectType struct {
 	ttl time.Duration
 }
 
-func New(cfg Config) *Cache {
+func New(options ...Option) *Cache {
 	c := &Cache{}
+	opts := NewOptions(options...)
 
 	// set default namespace if missing
-	if cfg.Namespace == "" {
-		cfg.Namespace = "default"
+	if opts.Namespace == "" {
+		opts.Namespace = "default"
 	}
 
 	// set default RedisFactor to 4 if missing
-	if cfg.RedisFactor == 0 {
-		cfg.RedisFactor = 4
+	if opts.RedisFactor == 0 {
+		opts.RedisFactor = 4
 	}
 
 	// set default CleanInterval to 10s if missing
-	if cfg.CleanInterval == 0 {
-		cfg.CleanInterval = time.Second * 10
-	} else if cfg.CleanInterval < time.Second {
+	if opts.CleanInterval == 0 {
+		opts.CleanInterval = time.Second * 10
+	} else if opts.CleanInterval < time.Second {
 		panic("CleanInterval must be second at least")
 	}
 
-	if cfg.OnError == nil {
+	if opts.OnError == nil {
 		panic("need OnError for cache initialization")
 	}
-	c.cfg = cfg
-	c.mem = newMemCache(cfg.CleanInterval)
-	c.rds = newRedisCache(cfg.GetConn, cfg.RedisFactor)
+
+	c.options = opts
+	c.mem = newMemCache(opts.CleanInterval)
+	c.rds = newRedisCache(opts.GetConn, opts.RedisFactor)
 	go c.watch()
 	return c
 }
 
 // Disable , disable cache, call loader function for each call
 func (c *Cache) Disable() {
-	c.cfg.Disabled = true
+	c.options.Disabled = true
 }
 
 func (c *Cache) SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error {
@@ -119,7 +120,7 @@ func (c *Cache) setObject(key string, obj interface{}, ttl time.Duration) error 
 
 func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f LoadFunc) error {
 	// is disabled, call loader function
-	if c.cfg.Disabled {
+	if c.options.Disabled {
 		o, err := f()
 		if err != nil {
 			return err
@@ -163,7 +164,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f Load
 			go func() {
 				_, resetErr := c.resetObject(key, ttl, f)
 				if resetErr != nil {
-					c.cfg.OnError(errors.WithStack(resetErr))
+					c.options.OnError(errors.WithStack(resetErr))
 					return
 				}
 			}()
@@ -265,8 +266,8 @@ func (c *Cache) onMetric(metricType MetricType, objectType string) func() {
 	start := time.Now()
 	return func() {
 		elapsedInMicros := time.Since(start).Microseconds()
-		if c.cfg.OnMetric != nil {
-			c.cfg.OnMetric(metricType, objectType, int(elapsedInMicros))
+		if c.options.OnMetric != nil {
+			c.options.OnMetric(metricType, objectType, int(elapsedInMicros))
 		}
 	}
 }
@@ -281,7 +282,7 @@ func (c *Cache) copy(src, dst interface{}) (err error) {
 			default:
 				err = errors.New(fmt.Sprint(r))
 			}
-			c.cfg.OnError(err)
+			c.options.OnError(err)
 		}
 	}()
 
@@ -298,7 +299,7 @@ func getObjectType(obj interface{}) string {
 }
 
 func (c *Cache) getKey(key string) string {
-	return fmt.Sprintf("%s:%s", c.cfg.Namespace, key)
+	return fmt.Sprintf("%s:%s", c.options.Namespace, key)
 }
 
 type notificationType int
@@ -317,17 +318,17 @@ type notification struct {
 }
 
 func (c *Cache) getNotificationChannel() string {
-	return fmt.Sprintf("%s:notification_channel", c.cfg.Namespace)
+	return fmt.Sprintf("%s:notification_channel", c.options.Namespace)
 }
 
 // watch the cache update
 func (c *Cache) watch() {
-	conn := c.cfg.GetConn()
+	conn := c.options.GetConn()
 	defer conn.Close()
 
 	psc := redis.PubSubConn{Conn: conn}
 	if err := psc.Subscribe(c.getNotificationChannel()); err != nil {
-		c.cfg.OnError(errors.WithStack(err))
+		c.options.OnError(errors.WithStack(err))
 		return
 	}
 
@@ -336,12 +337,12 @@ func (c *Cache) watch() {
 		case redis.Message:
 			var msg notification
 			if err := json.Unmarshal(v.Data, &msg); err != nil {
-				c.cfg.OnError(errors.WithStack(err))
+				c.options.OnError(errors.WithStack(err))
 				continue
 			}
 			c.onNotification(&msg)
 		case error:
-			c.cfg.OnError(errors.WithStack(v))
+			c.options.OnError(errors.WithStack(v))
 		}
 	}
 }
@@ -351,14 +352,13 @@ func (c *Cache) onNotification(ntf *notification) {
 	case notificationTypeSet:
 		objType, ok := c.objectTypes.Load(ntf.ObjectType)
 		if !ok {
-			c.cfg.OnError(errors.Wrapf(ErrObjectTypeNotRegistered, ntf.ObjectType))
-			break
+			return
 		}
 
 		obj := deepcopy.Copy(objType.(*objectType).typ)
 		if err := json.Unmarshal([]byte(ntf.Payload), obj); err != nil {
-			c.cfg.OnError(errors.WithStack(err))
-			break
+			c.options.OnError(errors.WithStack(err))
+			return
 		}
 
 		it := newItem(obj, objType.(*objectType).ttl)
@@ -371,30 +371,30 @@ func (c *Cache) onNotification(ntf *notification) {
 func (c *Cache) notify(ntf *notification) {
 	bs, err := json.Marshal(ntf.Object)
 	if err != nil {
-		c.cfg.OnError(errors.WithStack(err))
+		c.options.OnError(errors.WithStack(err))
 		return
 	}
 	ntf.Payload = string(bs)
 
 	msgBody, err := json.Marshal(ntf)
 	if err != nil {
-		c.cfg.OnError(errors.WithStack(err))
+		c.options.OnError(errors.WithStack(err))
 		return
 	}
 
-	conn := c.cfg.GetConn()
+	conn := c.options.GetConn()
 	defer func() {
 		if err == nil {
 			err = conn.Close()
 			if err != nil {
-				c.cfg.OnError(errors.WithStack(err))
+				c.options.OnError(errors.WithStack(err))
 			}
 		}
 	}()
 
 	_, err = conn.Do("PUBLISH", c.getNotificationChannel(), string(msgBody))
 	if err != nil {
-		c.cfg.OnError(errors.WithStack(err))
+		c.options.OnError(errors.WithStack(err))
 		return
 	}
 }

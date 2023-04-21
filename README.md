@@ -20,9 +20,9 @@ One of the key benefits of this library is its performance. By leveraging both i
 
 ### API
 ```go
-func (c *Cache) SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error 
+func (c *Cache) SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
 
-func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f LoadFunc) error 
+func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f LoadFunc) error
 
 func (c *Cache) Delete(key string) error
 ```

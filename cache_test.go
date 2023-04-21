@@ -50,17 +50,15 @@ func TestCache(t *testing.T) {
 		},
 	}
 
-	cfg := cache.Config{
-		GetConn: pool.Get,
-		OnMetric: func(metric cache.MetricType, objectType string, elapsedTime int) {
+	supercache := cache.New(
+		cache.GetConn(pool.Get),
+		cache.OnMetric(func(metric cache.MetricType, objectType string, elapsedTime int) {
 			// obtain metrics here
-		},
-		OnError: func(err error) {
+		}),
+		cache.OnError(func(err error) {
 			log.Printf("%+v", err)
-		},
-	}
-
-	supercache := cache.New(cfg)
+		}),
+	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()
