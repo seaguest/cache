@@ -12,13 +12,13 @@ var json = jsoniter.ConfigCompatibleWithStandardLibrary
 type redisCache struct {
 	getConn func() redis.Conn
 
-	redisFactor int
+	redisTTLFactor int
 }
 
-func newRedisCache(getConn func() redis.Conn, redisFactor int) *redisCache {
+func newRedisCache(getConn func() redis.Conn, redisTTLFactor int) *redisCache {
 	return &redisCache{
-		getConn:     getConn,
-		redisFactor: redisFactor,
+		getConn:        getConn,
+		redisTTLFactor: redisTTLFactor,
 	}
 }
 
@@ -46,7 +46,7 @@ func (c *redisCache) set(key string, obj interface{}, ttl time.Duration) (*Item,
 	it := newItem(obj, ttl)
 	redisTTL := 0
 	if ttl > 0 {
-		redisTTL = int(ttl/time.Second) * c.redisFactor
+		redisTTL = int(ttl/time.Second) * c.redisTTLFactor
 	}
 
 	bs, err := json.Marshal(it)

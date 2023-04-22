@@ -41,9 +41,9 @@ func New(options ...Option) *Cache {
 		opts.Namespace = "default"
 	}
 
-	// set default RedisFactor to 4 if missing
-	if opts.RedisFactor == 0 {
-		opts.RedisFactor = 4
+	// set default RedisTTLFactor to 4 if missing
+	if opts.RedisTTLFactor == 0 {
+		opts.RedisTTLFactor = 4
 	}
 
 	// set default CleanInterval to 10s if missing
@@ -59,7 +59,7 @@ func New(options ...Option) *Cache {
 
 	c.options = opts
 	c.mem = newMemCache(opts.CleanInterval)
-	c.rds = newRedisCache(opts.GetConn, opts.RedisFactor)
+	c.rds = newRedisCache(opts.GetConn, opts.RedisTTLFactor)
 	go c.watch()
 	return c
 }
@@ -139,9 +139,10 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 		return errors.WithStack(ErrIllegalTTL)
 	}
 
-	typeName := getTypeName(obj)
 	var metricType MetricType
-	defer c.onMetric(metricType, typeName)()
+	defer c.onMetric(key, metricType)()
+
+	typeName := getTypeName(obj)
 	c.checkType(typeName, obj, ttl)
 
 	var it *Item
@@ -254,12 +255,12 @@ func (c *Cache) checkType(typeName string, obj interface{}, ttl time.Duration) {
 	}
 }
 
-func (c *Cache) onMetric(metricType MetricType, typeName string) func() {
+func (c *Cache) onMetric(key string, metricType MetricType) func() {
 	start := time.Now()
 	return func() {
 		elapsedInMicros := time.Since(start).Microseconds()
 		if c.options.OnMetric != nil {
-			c.options.OnMetric(metricType, typeName, int(elapsedInMicros))
+			c.options.OnMetric(key, metricType, int(elapsedInMicros))
 		}
 	}
 }
