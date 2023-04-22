@@ -72,7 +72,7 @@ func OnError(onError func(err error)) Option {
 	}
 }
 
-func NewOptions(opts ...Option) Options {
+func newOptions(opts ...Option) Options {
 	opt := Options{}
 	for _, o := range opts {
 		o(&opt)

@@ -14,16 +14,14 @@ import (
 )
 
 var (
-	ErrIllegalTTL = errors.New("illegal ttl, must be in second/minute/hour")
+	ErrIllegalTTL = errors.New("illegal ttl, must be in whole numbers of seconds, no fractions")
 )
-
-type LoadFunc func() (interface{}, error)
 
 type Cache struct {
 	options Options
 
-	// store the import path(pkg_path+type)<->object mapping
-	objectTypes sync.Map
+	// store the pkg_path+type<->object mapping
+	types sync.Map
 
 	// rds cache, handles redis level cache
 	rds *redisCache
@@ -34,15 +32,9 @@ type Cache struct {
 	sfg singleflight.Group
 }
 
-// stores the object type and its ttl in memory
-type objectType struct {
-	typ interface{}
-	ttl time.Duration
-}
-
 func New(options ...Option) *Cache {
 	c := &Cache{}
-	opts := NewOptions(options...)
+	opts := newOptions(options...)
 
 	// set default namespace if missing
 	if opts.Namespace == "" {
@@ -97,28 +89,28 @@ func (c *Cache) setObject(key string, obj interface{}, ttl time.Duration) error 
 		return errors.WithStack(ErrIllegalTTL)
 	}
 
-	objType := getObjectType(obj)
-	c.registerObjectType(objType, obj, ttl)
+	typeName := getTypeName(obj)
+	c.checkType(typeName, obj, ttl)
 
-	key = c.getKey(key)
+	key = c.namespacedKey(key)
 	_, err, _ := c.sfg.Do(key+"set", func() (interface{}, error) {
 		_, err := c.rds.set(key, obj, ttl)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
 
-		c.notify(&notification{
-			Type:       notificationTypeSet,
-			ObjectType: objType,
-			Key:        key,
-			Object:     obj,
+		c.notifyAll(&actionRequest{
+			Action:   cacheSet,
+			TypeName: typeName,
+			Key:      key,
+			Object:   obj,
 		})
 		return nil, nil
 	})
 	return err
 }
 
-func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f LoadFunc) error {
+func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error {
 	// is disabled, call loader function
 	if c.options.Disabled {
 		o, err := f()
@@ -142,15 +134,15 @@ func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl 
 	return err
 }
 
-func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f LoadFunc) (err error) {
+func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) (err error) {
 	if ttl > ttl.Truncate(time.Second) {
 		return errors.WithStack(ErrIllegalTTL)
 	}
 
-	objType := getObjectType(obj)
+	typeName := getTypeName(obj)
 	var metricType MetricType
-	defer c.onMetric(metricType, objType)()
-	c.registerObjectType(objType, obj, ttl)
+	defer c.onMetric(metricType, typeName)()
+	c.checkType(typeName, obj, ttl)
 
 	var it *Item
 	defer func() {
@@ -171,7 +163,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f Load
 		}
 	}()
 
-	key = c.getKey(key)
+	key = c.namespacedKey(key)
 	// try to retrieve from local cache, return if found
 	it = c.mem.get(key)
 	if it != nil {
@@ -212,7 +204,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f Load
 }
 
 // resetObject load fresh data to redis and in-memory with loader function
-func (c *Cache) resetObject(key string, ttl time.Duration, f LoadFunc) (*Item, error) {
+func (c *Cache) resetObject(key string, ttl time.Duration, f func() (interface{}, error)) (*Item, error) {
 	it, err, _ := c.sfg.Do(key+"_reset", func() (interface{}, error) {
 		o, err := f()
 		if err != nil {
@@ -224,12 +216,12 @@ func (c *Cache) resetObject(key string, ttl time.Duration, f LoadFunc) (*Item, e
 			return nil, errors.WithStack(err)
 		}
 
-		// notify
-		c.notify(&notification{
-			Type:       notificationTypeSet,
-			ObjectType: getObjectType(o),
-			Key:        key,
-			Object:     o,
+		// notifyAll
+		c.notifyAll(&actionRequest{
+			Action:   cacheSet,
+			TypeName: getTypeName(o),
+			Key:      key,
+			Object:   o,
 		})
 
 		return it, nil
@@ -247,27 +239,27 @@ func (c *Cache) Delete(key string) error {
 		return errors.WithStack(err)
 	}
 
-	c.notify(&notification{
-		Type: notificationTypeDel,
-		Key:  key,
+	c.notifyAll(&actionRequest{
+		Action: cacheDelete,
+		Key:    key,
 	})
 	return nil
 }
 
-// registerObjectType register objectType or check if existing objectType match the current one.
-func (c *Cache) registerObjectType(objectTypeName string, obj interface{}, ttl time.Duration) {
-	_, ok := c.objectTypes.Load(objectTypeName)
+// checkType register type if not exists.
+func (c *Cache) checkType(typeName string, obj interface{}, ttl time.Duration) {
+	_, ok := c.types.Load(typeName)
 	if !ok {
-		c.objectTypes.Store(objectTypeName, &objectType{typ: obj, ttl: ttl})
+		c.types.Store(typeName, &objectType{typ: obj, ttl: ttl})
 	}
 }
 
-func (c *Cache) onMetric(metricType MetricType, objectType string) func() {
+func (c *Cache) onMetric(metricType MetricType, typeName string) func() {
 	start := time.Now()
 	return func() {
 		elapsedInMicros := time.Since(start).Microseconds()
 		if c.options.OnMetric != nil {
-			c.options.OnMetric(metricType, objectType, int(elapsedInMicros))
+			c.options.OnMetric(metricType, typeName, int(elapsedInMicros))
 		}
 	}
 }
@@ -294,31 +286,50 @@ func (c *Cache) copy(src, dst interface{}) (err error) {
 }
 
 // get the global unique id for a given object type.
-func getObjectType(obj interface{}) string {
-	return fmt.Sprintf("%s/%s", reflect.TypeOf(obj).Elem().PkgPath(), reflect.TypeOf(obj).String())
+func getTypeName(obj interface{}) string {
+	return reflect.TypeOf(obj).Elem().PkgPath() + "/" + reflect.TypeOf(obj).String()
 }
 
-func (c *Cache) getKey(key string) string {
-	return fmt.Sprintf("%s:%s", c.options.Namespace, key)
+func (c *Cache) namespacedKey(key string) string {
+	return c.options.Namespace + ":" + key
 }
 
-type notificationType int
+type cacheAction int
 
 const (
-	notificationTypeSet notificationType = iota // notificationTypeSet == 0
-	notificationTypeDel
+	cacheSet cacheAction = iota // cacheSet == 0
+	cacheDelete
 )
 
-type notification struct {
-	Type       notificationType `json:"type"`
-	ObjectType string           `json:"object_type"`
-	Key        string           `json:"key"`
-	Object     interface{}      `json:"-"`
-	Payload    string           `json:"payload"`
+// stores the object type and its ttl in memory
+type objectType struct {
+	// object type
+	typ interface{}
+
+	// object ttl
+	ttl time.Duration
 }
 
-func (c *Cache) getNotificationChannel() string {
-	return fmt.Sprintf("%s:notification_channel", c.options.Namespace)
+// actionRequest defines an entity which will be broadcast to all cache instances
+type actionRequest struct {
+	// cacheSet or cacheDelete
+	Action cacheAction `json:"actionRequest"`
+
+	// the type_name of the target object
+	TypeName string `json:"type_name"`
+
+	// key of the cache item
+	Key string `json:"key"`
+
+	// object stored in the cache, only used by caller, won't be broadcast
+	Object interface{} `json:"-"`
+
+	// the marshaled string of object
+	Payload []byte `json:"payload"`
+}
+
+func (c *Cache) actionChannel() string {
+	return c.options.Namespace + ":action_channel"
 }
 
 // watch the cache update
@@ -327,7 +338,7 @@ func (c *Cache) watch() {
 	defer conn.Close()
 
 	psc := redis.PubSubConn{Conn: conn}
-	if err := psc.Subscribe(c.getNotificationChannel()); err != nil {
+	if err := psc.Subscribe(c.actionChannel()); err != nil {
 		c.options.OnError(errors.WithStack(err))
 		return
 	}
@@ -335,48 +346,49 @@ func (c *Cache) watch() {
 	for {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
-			var msg notification
+			var msg actionRequest
 			if err := json.Unmarshal(v.Data, &msg); err != nil {
 				c.options.OnError(errors.WithStack(err))
 				continue
 			}
-			c.onNotification(&msg)
+			c.onAction(&msg)
 		case error:
 			c.options.OnError(errors.WithStack(v))
 		}
 	}
 }
 
-func (c *Cache) onNotification(ntf *notification) {
-	switch ntf.Type {
-	case notificationTypeSet:
-		objType, ok := c.objectTypes.Load(ntf.ObjectType)
+func (c *Cache) onAction(ar *actionRequest) {
+	switch ar.Action {
+	case cacheSet:
+		objType, ok := c.types.Load(ar.TypeName)
 		if !ok {
 			return
 		}
 
 		obj := deepcopy.Copy(objType.(*objectType).typ)
-		if err := json.Unmarshal([]byte(ntf.Payload), obj); err != nil {
+		if err := json.Unmarshal(ar.Payload, obj); err != nil {
 			c.options.OnError(errors.WithStack(err))
 			return
 		}
 
 		it := newItem(obj, objType.(*objectType).ttl)
-		c.mem.set(ntf.Key, it)
-	case notificationTypeDel:
-		c.mem.delete(ntf.Key)
+		c.mem.set(ar.Key, it)
+	case cacheDelete:
+		c.mem.delete(ar.Key)
 	}
 }
 
-func (c *Cache) notify(ntf *notification) {
-	bs, err := json.Marshal(ntf.Object)
+// notifyAll will broadcast the cache change to all cache instances
+func (c *Cache) notifyAll(ar *actionRequest) {
+	bs, err := json.Marshal(ar.Object)
 	if err != nil {
 		c.options.OnError(errors.WithStack(err))
 		return
 	}
-	ntf.Payload = string(bs)
+	ar.Payload = bs
 
-	msgBody, err := json.Marshal(ntf)
+	msgBody, err := json.Marshal(ar)
 	if err != nil {
 		c.options.OnError(errors.WithStack(err))
 		return
@@ -392,7 +404,7 @@ func (c *Cache) notify(ntf *notification) {
 		}
 	}()
 
-	_, err = conn.Do("PUBLISH", c.getNotificationChannel(), string(msgBody))
+	_, err = conn.Do("PUBLISH", c.actionChannel(), string(msgBody))
 	if err != nil {
 		c.options.OnError(errors.WithStack(err))
 		return
