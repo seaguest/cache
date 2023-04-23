@@ -19,8 +19,13 @@ var (
 
 type Cache interface {
 	SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
+
+	// GetObject loader function f() will be called in case cache all miss
 	GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error
+
 	Delete(key string) error
+
+	// Disable GetObject will call loader function in case cache is disabled.
 	Disable()
 }
 
@@ -265,9 +270,9 @@ func (c *cache) checkType(typeName string, obj interface{}, ttl time.Duration) {
 func (c *cache) onMetric(key string, metricType MetricType) func() {
 	start := time.Now()
 	return func() {
-		elapsedInMillis := time.Since(start).Milliseconds()
+		elapsedTime := time.Since(start)
 		if c.options.OnMetric != nil {
-			c.options.OnMetric(key, metricType, int(elapsedInMillis))
+			c.options.OnMetric(key, metricType, elapsedTime)
 		}
 	}
 }

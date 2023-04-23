@@ -114,8 +114,13 @@ sequenceDiagram
 ```go
 type Cache interface {
     SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
+    
+    // GetObject loader function f() will be called in case cache all miss
     GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error
+    
     Delete(key string) error
+    
+    // Disable GetObject will call loader function in case cache is disabled.
     Disable()
 }
 ```
@@ -188,8 +193,8 @@ func main() {
 
 	supercache := cache.New(
 		cache.GetConn(pool.Get),
-		cache.OnMetric(func(key string, metric cache.MetricType, elapsedTime int) {
-			log.Println("x---------", metric, "-", key, "-", elapsedTime)
+		cache.OnMetric(func(key string, metric cache.MetricType, elapsedTime time.Duration) {
+			log.Println("x---------", key, "-", metric, "-", elapsedTime)
 		}),
 		cache.OnError(func(err error) {
 			log.Printf("%+v", err)
@@ -201,6 +206,7 @@ func main() {
 	v, e := getStruct(ctx, 100, supercache)
 	log.Println(v, e)
 }
+
 ```
 
 ### JetBrains
