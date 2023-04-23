@@ -17,7 +17,14 @@ var (
 	ErrIllegalTTL = errors.New("illegal ttl, must be in whole numbers of seconds, no fractions")
 )
 
-type Cache struct {
+type Cache interface {
+	SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
+	GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error
+	Delete(key string) error
+	Disable()
+}
+
+type cache struct {
 	options Options
 
 	// store the pkg_path+type<->object mapping
@@ -32,8 +39,8 @@ type Cache struct {
 	sfg singleflight.Group
 }
 
-func New(options ...Option) *Cache {
-	c := &Cache{}
+func New(options ...Option) Cache {
+	c := &cache{}
 	opts := newOptions(options...)
 
 	// set default namespace if missing
@@ -65,11 +72,11 @@ func New(options ...Option) *Cache {
 }
 
 // Disable , disable cache, call loader function for each call
-func (c *Cache) Disable() {
+func (c *cache) Disable() {
 	c.options.Disabled = true
 }
 
-func (c *Cache) SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error {
+func (c *cache) SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error {
 	done := make(chan error)
 	var err error
 	go func() {
@@ -84,7 +91,7 @@ func (c *Cache) SetObject(ctx context.Context, key string, obj interface{}, ttl 
 	return err
 }
 
-func (c *Cache) setObject(key string, obj interface{}, ttl time.Duration) error {
+func (c *cache) setObject(key string, obj interface{}, ttl time.Duration) error {
 	if ttl > ttl.Truncate(time.Second) {
 		return errors.WithStack(ErrIllegalTTL)
 	}
@@ -110,7 +117,7 @@ func (c *Cache) setObject(key string, obj interface{}, ttl time.Duration) error 
 	return err
 }
 
-func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error {
+func (c *cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error {
 	// is disabled, call loader function
 	if c.options.Disabled {
 		o, err := f()
@@ -134,7 +141,7 @@ func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl 
 	return err
 }
 
-func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) (err error) {
+func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) (err error) {
 	if ttl > ttl.Truncate(time.Second) {
 		return errors.WithStack(ErrIllegalTTL)
 	}
@@ -205,7 +212,7 @@ func (c *Cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 }
 
 // resetObject load fresh data to redis and in-memory with loader function
-func (c *Cache) resetObject(key string, ttl time.Duration, f func() (interface{}, error)) (*Item, error) {
+func (c *cache) resetObject(key string, ttl time.Duration, f func() (interface{}, error)) (*Item, error) {
 	it, err, _ := c.sfg.Do(key+"_reset", func() (interface{}, error) {
 		o, err := f()
 		if err != nil {
@@ -234,7 +241,7 @@ func (c *Cache) resetObject(key string, ttl time.Duration, f func() (interface{}
 }
 
 // Delete notify all cache instances to delete cache key
-func (c *Cache) Delete(key string) error {
+func (c *cache) Delete(key string) error {
 	// delete redis, then pub to delete cache
 	if err := c.rds.delete(key); err != nil {
 		return errors.WithStack(err)
@@ -248,25 +255,25 @@ func (c *Cache) Delete(key string) error {
 }
 
 // checkType register type if not exists.
-func (c *Cache) checkType(typeName string, obj interface{}, ttl time.Duration) {
+func (c *cache) checkType(typeName string, obj interface{}, ttl time.Duration) {
 	_, ok := c.types.Load(typeName)
 	if !ok {
 		c.types.Store(typeName, &objectType{typ: obj, ttl: ttl})
 	}
 }
 
-func (c *Cache) onMetric(key string, metricType MetricType) func() {
+func (c *cache) onMetric(key string, metricType MetricType) func() {
 	start := time.Now()
 	return func() {
-		elapsedInMicros := time.Since(start).Microseconds()
+		elapsedInMillis := time.Since(start).Milliseconds()
 		if c.options.OnMetric != nil {
-			c.options.OnMetric(key, metricType, int(elapsedInMicros))
+			c.options.OnMetric(key, metricType, int(elapsedInMillis))
 		}
 	}
 }
 
 // copy object to return, to avoid dirty data
-func (c *Cache) copy(src, dst interface{}) (err error) {
+func (c *cache) copy(src, dst interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			switch v := r.(type) {
@@ -291,7 +298,7 @@ func getTypeName(obj interface{}) string {
 	return reflect.TypeOf(obj).Elem().PkgPath() + "/" + reflect.TypeOf(obj).String()
 }
 
-func (c *Cache) namespacedKey(key string) string {
+func (c *cache) namespacedKey(key string) string {
 	return c.options.Namespace + ":" + key
 }
 
@@ -329,12 +336,12 @@ type actionRequest struct {
 	Payload []byte `json:"payload"`
 }
 
-func (c *Cache) actionChannel() string {
+func (c *cache) actionChannel() string {
 	return c.options.Namespace + ":action_channel"
 }
 
 // watch the cache update
-func (c *Cache) watch() {
+func (c *cache) watch() {
 	conn := c.options.GetConn()
 	defer conn.Close()
 
@@ -359,7 +366,7 @@ func (c *Cache) watch() {
 	}
 }
 
-func (c *Cache) onAction(ar *actionRequest) {
+func (c *cache) onAction(ar *actionRequest) {
 	switch ar.Action {
 	case cacheSet:
 		objType, ok := c.types.Load(ar.TypeName)
@@ -381,7 +388,7 @@ func (c *Cache) onAction(ar *actionRequest) {
 }
 
 // notifyAll will broadcast the cache change to all cache instances
-func (c *Cache) notifyAll(ar *actionRequest) {
+func (c *cache) notifyAll(ar *actionRequest) {
 	bs, err := json.Marshal(ar.Object)
 	if err != nil {
 		c.options.OnError(errors.WithStack(err))

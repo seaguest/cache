@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"testing"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"github.com/seaguest/cache"
 )
 
@@ -21,47 +22,66 @@ func (p *TestStruct) DeepCopy() interface{} {
 	return &c
 }
 
-func getStruct(ctx context.Context, id uint32, cache *cache.Cache) (*TestStruct, error) {
-	var v TestStruct
-	err := cache.GetObject(ctx, fmt.Sprintf("TestStruct:%d", id), &v, time.Second*3, func() (interface{}, error) {
-		// data fetch logic to be done here
-		time.Sleep(time.Millisecond * 1200 * 1)
-		return &TestStruct{Name: "test"}, nil
+var _ = Describe("Cache", func() {
+	Context("Cache", func() {
+		var (
+			pool    *redis.Pool
+			ehCache cache.Cache
+		)
+
+		BeforeEach(func() {
+			pool = &redis.Pool{
+				MaxIdle:     1000,
+				MaxActive:   1000,
+				Wait:        true,
+				IdleTimeout: 240 * time.Second,
+				TestOnBorrow: func(c redis.Conn, t time.Time) error {
+					_, err := c.Do("PING")
+					return err
+				},
+				Dial: func() (redis.Conn, error) {
+					return redis.Dial("tcp", "127.0.0.1:7379")
+				},
+			}
+		})
+
+		It("Test cache get", func() {
+			ehCache = cache.New(
+				cache.GetConn(pool.Get),
+				cache.OnMetric(func(key string, metric cache.MetricType, elapsedTime int) {
+					log.Println("x---------", metric, "-", key, "-", elapsedTime)
+				}),
+				cache.OnError(func(err error) {
+					log.Printf("%+v", err)
+				}),
+			)
+
+			val := &TestStruct{Name: "test"}
+			key := "test#1"
+
+			loadFunc := func() (interface{}, error) {
+				// data fetch logic to be done here
+				time.Sleep(time.Millisecond * 1200 * 1)
+				return val, nil
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+			defer cancel()
+
+			var v TestStruct
+			err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
+			if err != nil {
+				fmt.Printf("%+v", err)
+				return
+			}
+
+			log.Println("xxxxxxxxxxxx")
+			log.Println(v, err)
+
+			Ω(err).ToNot(HaveOccurred())
+			Ω(&v).To(Equal(val))
+
+			time.Sleep(time.Second * 3)
+		})
 	})
-	if err != nil {
-		fmt.Printf("%+v", err)
-		return nil, err
-	}
-	return &v, nil
-}
-
-func TestCache(t *testing.T) {
-	pool := &redis.Pool{
-		MaxIdle:     1000,
-		MaxActive:   1000,
-		Wait:        true,
-		IdleTimeout: 240 * time.Second,
-		TestOnBorrow: func(c redis.Conn, t time.Time) error {
-			_, err := c.Do("PING")
-			return err
-		},
-		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", "127.0.0.1:7379")
-		},
-	}
-
-	supercache := cache.New(
-		cache.GetConn(pool.Get),
-		cache.OnMetric(func(metric cache.MetricType, objectType string, elapsedTime int) {
-			// obtain metrics here
-		}),
-		cache.OnError(func(err error) {
-			log.Printf("%+v", err)
-		}),
-	)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
-	defer cancel()
-	v, e := getStruct(ctx, 100, supercache)
-	log.Println(v, e)
-}
+})

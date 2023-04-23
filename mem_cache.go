@@ -9,6 +9,7 @@ import (
 type memCache struct {
 	items sync.Map
 	ci    time.Duration
+	stop  chan bool
 }
 
 // newMemCache memcache will scan all objects for every clean interval and delete expired key.
@@ -16,6 +17,7 @@ func newMemCache(ci time.Duration) *memCache {
 	c := &memCache{
 		items: sync.Map{},
 		ci:    ci,
+		stop:  make(chan bool),
 	}
 
 	go c.runJanitor()
@@ -50,6 +52,9 @@ func (c *memCache) runJanitor() {
 		select {
 		case <-ticker.C:
 			c.DeleteExpired()
+		case <-c.stop:
+			ticker.Stop()
+			return
 		}
 	}
 }

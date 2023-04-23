@@ -14,17 +14,110 @@ One of the key benefits of this library is its performance. By leveraging both i
 - **Concurrency**: singleflight is used to avoid cache breakdown.
 - **Metrics** : provide callback function to measure the cache metrics.
 
+## Sequence diagram
+### Reload from loader function
+```mermaid
+sequenceDiagram
+    participant APP as Application
+    participant M as cache
+    participant L as Local Cache
+    participant L2 as Local Cache2
+    participant S as Shared Cache
+    participant R as LoadFunc(DB)
+    
+    APP ->> M: Cache.GetObject()
+    alt reload
+        M ->> R: LoadFunc
+        R -->> M: return from LoadFunc
+        M -->> APP: return
+        M ->> S: redis.Set()
+        M ->> L: notifyAll()
+        M ->> L2: notifyAll()
+    end
+```
+
+### Cache GetObject
+```mermaid
+sequenceDiagram
+    participant APP as Application
+    participant M as cache
+    participant L as Local Cache
+    participant L2 as Local Cache2
+    participant S as Shared Cache
+    participant R as LoadFunc(DB)
+    
+    APP ->> M: Cache.GetObject()
+    alt Local Cache hit
+        M ->> L: mem.Get()
+        L -->> M: {interface{}, error}
+        M -->> APP: return
+        M -->> R: async reload if expired
+    else Local Cache miss but Shared Cache hit
+        M ->> L: mem.Get()
+        L -->> M: cache miss
+        M ->> S: redis.Get()
+        S -->> M: {interface{}, error}
+        M -->> APP: return
+        M -->> R: async reload if expired
+    else All miss
+        M ->> L: mem.Get()
+        L -->> M: cache miss
+        M ->> S: redis.Get()
+        S -->> M: cache miss
+        M ->> R: sync reload
+        R -->> M: return from reload
+        M -->> APP: return
+    end
+```
+
+### Set
+```mermaid
+sequenceDiagram
+    participant APP as Application
+    participant M as cache
+    participant L as Local Cache
+    participant L2 as Local Cache2
+    participant S as Shared Cache
+    
+    APP ->> M: Cache.SetObject()
+    alt Set
+        M ->> S: redis.Set()
+        M ->> L: notifyAll()
+        M ->> L2: notifyAll()
+        M -->> APP: return
+    end
+```
+
+### Delete
+```mermaid
+sequenceDiagram
+    participant APP as Application
+    participant M as cache
+    participant L as Local Cache
+    participant L2 as Local Cache2
+    participant S as Shared Cache
+    
+    APP ->> M: Cache.Delete()
+    alt Delete
+        M ->> S: redis.Delete()
+        M ->> L: notifyAll()
+        M ->> L2: notifyAll()
+        M -->> APP: return
+    end
+```
+
 ### Installation
 
 `go get -u github.com/seaguest/cache`
 
 ### API
 ```go
-func (c *Cache) SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
-
-func (c *Cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f LoadFunc) error
-
-func (c *Cache) Delete(key string) error
+type Cache interface {
+    SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
+    GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error
+    Delete(key string) error
+    Disable()
+}
 ```
 
 ### Tips
@@ -42,13 +135,12 @@ func (p *TestStruct) DeepCopy() interface{} {
 ### Usage
 
 ``` go
-package cache_test
+package main
 
 import (
 	"context"
 	"fmt"
 	"log"
-	"testing"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -65,7 +157,7 @@ func (p *TestStruct) DeepCopy() interface{} {
 	return &c
 }
 
-func getStruct(ctx context.Context, id uint32, cache *cache.Cache) (*TestStruct, error) {
+func getStruct(ctx context.Context, id uint32, cache cache.Cache) (*TestStruct, error) {
 	var v TestStruct
 	err := cache.GetObject(ctx, fmt.Sprintf("TestStruct:%d", id), &v, time.Second*3, func() (interface{}, error) {
 		// data fetch logic to be done here
@@ -79,7 +171,7 @@ func getStruct(ctx context.Context, id uint32, cache *cache.Cache) (*TestStruct,
 	return &v, nil
 }
 
-func TestCache(t *testing.T) {
+func main() {
 	pool := &redis.Pool{
 		MaxIdle:     1000,
 		MaxActive:   1000,
@@ -90,21 +182,19 @@ func TestCache(t *testing.T) {
 			return err
 		},
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", "127.0.0.1:7379")
+			return redis.Dial("tcp", "127.0.0.1:6379")
 		},
 	}
 
-	cfg := cache.Config{
-		GetConn: pool.Get,
-		OnMetric: func(metric cache.MetricType, objectType string, elapsedTime int) {
-			// obtain metrics here
-		},
-		OnError: func(err error) {
+	supercache := cache.New(
+		cache.GetConn(pool.Get),
+		cache.OnMetric(func(key string, metric cache.MetricType, elapsedTime int) {
+			log.Println("x---------", metric, "-", key, "-", elapsedTime)
+		}),
+		cache.OnError(func(err error) {
 			log.Printf("%+v", err)
-		},
-	}
-
-	supercache := cache.New(cfg)
+		}),
+	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()
