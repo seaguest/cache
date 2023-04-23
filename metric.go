@@ -3,7 +3,8 @@ package cache
 type MetricType int
 
 const (
-	MetricTypeMemHit MetricType = iota
+	MetricTypeUnknown MetricType = iota
+	MetricTypeMemHit
 	MetricTypeMemHitExpired
 	MetricTypeRedisHit
 	MetricTypeRedisHitExpired

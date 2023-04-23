@@ -2,8 +2,10 @@ package cache_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -16,6 +18,12 @@ type TestStruct struct {
 	Name string
 }
 
+type metric struct {
+	Key         string
+	Type        cache.MetricType
+	ElapsedTime time.Duration
+}
+
 // this will be called by deepcopy to improves reflect copy performance
 func (p *TestStruct) DeepCopy() interface{} {
 	c := *p
@@ -25,8 +33,12 @@ func (p *TestStruct) DeepCopy() interface{} {
 var _ = Describe("Cache", func() {
 	Context("Cache", func() {
 		var (
-			pool    *redis.Pool
-			ehCache cache.Cache
+			pool       *redis.Pool
+			ehCache    cache.Cache
+			metricChan chan *metric
+			val        *TestStruct
+			key        string
+			delay      time.Duration
 		)
 
 		BeforeEach(func() {
@@ -40,48 +52,328 @@ var _ = Describe("Cache", func() {
 					return err
 				},
 				Dial: func() (redis.Conn, error) {
-					return redis.Dial("tcp", "127.0.0.1:7379")
+					return redis.Dial("tcp", "127.0.0.1:6379")
 				},
 			}
+			metricChan = make(chan *metric, 1)
+
+			val = &TestStruct{Name: "test"}
+			key = "test#1"
+			delay = time.Millisecond * 1200
 		})
 
-		It("Test cache get", func() {
-			ehCache = cache.New(
-				cache.GetConn(pool.Get),
-				cache.OnMetric(func(key string, metric cache.MetricType, elapsedTime int) {
-					log.Println("x---------", metric, "-", key, "-", elapsedTime)
-				}),
-				cache.OnError(func(err error) {
-					log.Printf("%+v", err)
-				}),
-			)
+		Context("Test loadFunc", func() {
+			BeforeEach(func() {
+				ehCache = cache.New(
+					cache.GetConn(pool.Get),
+					cache.CleanInterval(time.Second),
+					cache.OnMetric(func(key string, metricType cache.MetricType, elapsedTime time.Duration) {
+						mc := &metric{
+							Key:         key,
+							Type:        metricType,
+							ElapsedTime: elapsedTime,
+						}
+						metricChan <- mc
 
-			val := &TestStruct{Name: "test"}
-			key := "test#1"
+					}),
+					cache.OnError(func(err error) {
+						log.Printf("xxxxxxxxx-----------------%+v", err)
+					}),
+				)
+			})
 
-			loadFunc := func() (interface{}, error) {
-				// data fetch logic to be done here
-				time.Sleep(time.Millisecond * 1200 * 1)
-				return val, nil
-			}
+			It("loadFunc succeed", func() {
+				ehCache.Delete(key)
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
-			defer cancel()
+				loadFunc := func() (interface{}, error) {
+					// data fetch logic to be done here
+					time.Sleep(delay)
+					return val, nil
+				}
 
-			var v TestStruct
-			err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
-			if err != nil {
-				fmt.Printf("%+v", err)
-				return
-			}
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
 
-			log.Println("xxxxxxxxxxxx")
-			log.Println(v, err)
+				var v TestStruct
+				err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
+				if err != nil {
+					fmt.Printf("%+v", err)
+					return
+				}
+				log.Println(v, err)
 
-			Ω(err).ToNot(HaveOccurred())
-			Ω(&v).To(Equal(val))
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(val))
 
-			time.Sleep(time.Second * 3)
+				mc := <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
+				Ω(math.Abs(float64(mc.ElapsedTime-delay)) < float64(time.Millisecond*10)).To(Equal(true))
+
+				log.Println("001-------", mc)
+			})
+
+			It("loadFunc error", func() {
+				ehCache.Delete(key)
+
+				unkownErr := errors.New("unknown error")
+				loadFunc := func() (interface{}, error) {
+					return nil, unkownErr
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
+
+				var v TestStruct
+				err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
+				if err != nil {
+					fmt.Printf("%+v", err)
+					return
+				}
+				Ω(err).To(Equal(unkownErr))
+
+				mc := <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
+			})
+
+			It("loadFunc panic string", func() {
+				loadFunc := func() (interface{}, error) {
+					panic("panic")
+					return val, nil
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+				defer cancel()
+
+				var v TestStruct
+				err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
+				Ω(err.Error()).To(Equal("panic"))
+
+				mc := <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
+
+			})
+
+			It("loadFunc panic error", func() {
+				unknownErr := errors.New("unknown")
+				loadFunc := func() (interface{}, error) {
+					panic(unknownErr)
+					return val, nil
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+				defer cancel()
+
+				var v TestStruct
+				err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
+				Ω(errors.Is(err, unknownErr)).To(Equal(true))
+
+				mc := <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
+
+			})
+
+			It("loadFunc timeout", func() {
+				ehCache.Delete(key)
+
+				loadFunc := func() (interface{}, error) {
+					time.Sleep(delay)
+					return val, nil
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
+				defer cancel()
+
+				var v TestStruct
+				err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
+				Ω(err).To(MatchError(context.DeadlineExceeded))
+
+				mc := <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
+			})
+
 		})
+
+		Context("Test redis hit", func() {
+			BeforeEach(func() {
+				ehCache = cache.New(
+					cache.GetConn(pool.Get),
+					cache.CleanInterval(time.Second),
+					cache.OnMetric(func(key string, metricType cache.MetricType, elapsedTime time.Duration) {
+						mc := &metric{
+							Key:         key,
+							Type:        metricType,
+							ElapsedTime: elapsedTime,
+						}
+						metricChan <- mc
+
+					}),
+					cache.OnError(func(err error) {
+						log.Printf("xxxxxxxxx-----------------%+v", err)
+					}),
+				)
+			})
+
+			It("redis hit ok", func() {
+				ehCache.Delete(key)
+				loadFunc := func() (interface{}, error) {
+					// data fetch logic to be done here
+					time.Sleep(delay)
+					return val, nil
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
+
+				var v TestStruct
+				err := ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(val))
+
+				mc := <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
+
+				ehCache.FlushMem()
+
+				err = ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(val))
+
+				mc = <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeRedisHit))
+
+				log.Println("001-------", mc)
+			})
+
+			It("redis hit expired", func() {
+				ehCache.Delete(key)
+				loadFunc := func() (interface{}, error) {
+					// data fetch logic to be done here
+					time.Sleep(delay)
+					return val, nil
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
+
+				var v TestStruct
+				err := ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(val))
+
+				mc := <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
+
+				// wait 2 second
+				time.Sleep(time.Second * 2)
+				ehCache.FlushMem()
+
+				err = ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(val))
+
+				mc = <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeRedisHitExpired))
+
+				log.Println("001-------", mc)
+			})
+		})
+
+		Context("Test mem hit", func() {
+			BeforeEach(func() {
+				ehCache = cache.New(
+					cache.GetConn(pool.Get),
+					cache.CleanInterval(time.Second*2),
+					cache.OnMetric(func(key string, metricType cache.MetricType, elapsedTime time.Duration) {
+						mc := &metric{
+							Key:         key,
+							Type:        metricType,
+							ElapsedTime: elapsedTime,
+						}
+						metricChan <- mc
+
+					}),
+					cache.OnError(func(err error) {
+						log.Printf("xxxxxxxxx-----------------%+v", err)
+					}),
+				)
+			})
+
+			It("mem hit ok", func() {
+				ehCache.Delete(key)
+				loadFunc := func() (interface{}, error) {
+					// data fetch logic to be done here
+					time.Sleep(delay)
+					return val, nil
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
+
+				var v TestStruct
+				err := ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(val))
+
+				mc := <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
+
+				time.Sleep(time.Millisecond)
+
+				err = ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(val))
+
+				mc = <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeMemHit))
+
+				log.Println("001-------", mc)
+			})
+
+			It("mem hit expired", func() {
+				ehCache.Delete(key)
+				loadFunc := func() (interface{}, error) {
+					// data fetch logic to be done here
+					time.Sleep(delay)
+					return val, nil
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
+
+				var v TestStruct
+				err := ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(val))
+
+				mc := <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
+
+				// wait 2 second
+				time.Sleep(time.Second * 1)
+
+				err = ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(val))
+
+				mc = <-metricChan
+				Ω(mc.Key).To(Equal(key))
+				Ω(mc.Type).To(Equal(cache.MetricTypeRedisHitExpired))
+
+				log.Println("001-------", mc)
+			})
+		})
+
 	})
 })

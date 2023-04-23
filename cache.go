@@ -3,7 +3,9 @@ package cache
 import (
 	"context"
 	"fmt"
+	"log"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +19,10 @@ var (
 	ErrIllegalTTL = errors.New("illegal ttl, must be in whole numbers of seconds, no fractions")
 )
 
+const (
+	defaultNamespace = "default"
+)
+
 type Cache interface {
 	SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
 
@@ -24,6 +30,12 @@ type Cache interface {
 	GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error
 
 	Delete(key string) error
+
+	// FlushMem clean all mem cache
+	FlushMem() error
+
+	// FlushRedis clean all redis cache
+	FlushRedis() error
 
 	// Disable GetObject will call loader function in case cache is disabled.
 	Disable()
@@ -50,7 +62,7 @@ func New(options ...Option) Cache {
 
 	// set default namespace if missing
 	if opts.Namespace == "" {
-		opts.Namespace = "default"
+		opts.Namespace = defaultNamespace
 	}
 
 	// set default RedisTTLFactor to 4 if missing
@@ -151,14 +163,20 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 		return errors.WithStack(ErrIllegalTTL)
 	}
 
+	start := time.Now()
 	var metricType MetricType
-	defer c.onMetric(key, metricType)()
-
 	typeName := getTypeName(obj)
 	c.checkType(typeName, obj, ttl)
 
+	log.Println("002-------start")
+
 	var it *Item
 	defer func() {
+		if c.options.OnMetric != nil {
+			elapsedTime := time.Since(start)
+			c.options.OnMetric(c.unNamespacedKey(key), metricType, elapsedTime)
+		}
+
 		// deepcopy before return
 		if err == nil {
 			err = c.copy(it.Object, obj)
@@ -185,6 +203,7 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 		} else {
 			metricType = MetricTypeMemHitExpired
 		}
+		log.Println("003-------mem found-", metricType)
 		return
 	}
 
@@ -203,12 +222,17 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 			} else {
 				metricType = MetricTypeRedisHitExpired
 			}
+			log.Println("004-------redis found-", metricType)
 			return v, nil
 		}
 
 		metricType = MetricTypeMiss
+		log.Println("005-------loadfunc-", metricType)
+		fmt.Println("2*************----", err)
 		return c.resetObject(key, ttl, f)
 	})
+	log.Println("2-----------------", itf, err)
+
 	if err != nil {
 		return
 	}
@@ -218,15 +242,28 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 
 // resetObject load fresh data to redis and in-memory with loader function
 func (c *cache) resetObject(key string, ttl time.Duration, f func() (interface{}, error)) (*Item, error) {
-	it, err, _ := c.sfg.Do(key+"_reset", func() (interface{}, error) {
-		o, err := f()
+	itf, err, _ := c.sfg.Do(key+"_reset", func() (it interface{}, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				switch v := r.(type) {
+				case error:
+					err = errors.WithStack(v)
+				default:
+					err = errors.New(fmt.Sprint(r))
+				}
+				c.options.OnError(err)
+			}
+		}()
+
+		var o interface{}
+		o, err = f()
 		if err != nil {
-			return nil, err
+			return
 		}
 
-		it, err := c.rds.set(key, o, ttl)
+		it, err = c.rds.set(key, o, ttl)
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return
 		}
 
 		// notifyAll
@@ -236,17 +273,29 @@ func (c *cache) resetObject(key string, ttl time.Duration, f func() (interface{}
 			Key:      key,
 			Object:   o,
 		})
-
-		return it, nil
+		return
 	})
+	log.Println("1-----------------", itf, err)
 	if err != nil {
 		return nil, err
 	}
-	return it.(*Item), nil
+	return itf.(*Item), nil
+}
+
+func (c *cache) FlushMem() error {
+	c.mem.Flush()
+	return nil
+}
+
+func (c *cache) FlushRedis() error {
+	c.rds.Flush(c.options.Namespace + ":")
+	return nil
 }
 
 // Delete notify all cache instances to delete cache key
 func (c *cache) Delete(key string) error {
+	key = c.namespacedKey(key)
+
 	// delete redis, then pub to delete cache
 	if err := c.rds.delete(key); err != nil {
 		return errors.WithStack(err)
@@ -264,16 +313,6 @@ func (c *cache) checkType(typeName string, obj interface{}, ttl time.Duration) {
 	_, ok := c.types.Load(typeName)
 	if !ok {
 		c.types.Store(typeName, &objectType{typ: obj, ttl: ttl})
-	}
-}
-
-func (c *cache) onMetric(key string, metricType MetricType) func() {
-	start := time.Now()
-	return func() {
-		elapsedTime := time.Since(start)
-		if c.options.OnMetric != nil {
-			c.options.OnMetric(key, metricType, elapsedTime)
-		}
 	}
 }
 
@@ -305,6 +344,10 @@ func getTypeName(obj interface{}) string {
 
 func (c *cache) namespacedKey(key string) string {
 	return c.options.Namespace + ":" + key
+}
+
+func (c *cache) unNamespacedKey(key string) string {
+	return strings.TrimPrefix(key, c.options.Namespace+":")
 }
 
 type cacheAction int
@@ -394,6 +437,8 @@ func (c *cache) onAction(ar *actionRequest) {
 
 // notifyAll will broadcast the cache change to all cache instances
 func (c *cache) notifyAll(ar *actionRequest) {
+	fmt.Println("notifyAll...", ar)
+
 	bs, err := json.Marshal(ar.Object)
 	if err != nil {
 		c.options.OnError(errors.WithStack(err))
