@@ -118,7 +118,7 @@ var _ = Describe("Cache", func() {
 			}
 		})
 
-		Context("Test loadFunc", func() {
+		Context("stress test", func() {
 			BeforeEach(func() {
 				ehCache = cache.New(
 					cache.GetConn(pool.Get),
@@ -141,7 +141,7 @@ var _ = Describe("Cache", func() {
 
 							var v ComplexStruct1
 							err := ehCache.GetObject(ctx, fmt.Sprintf("complex_struct_1#%d", id), &v, time.Second*3, func() (interface{}, error) {
-								time.Sleep(time.Millisecond * 1 * 1)
+								time.Sleep(time.Millisecond * 10)
 								cs := cs1
 								cs.ID = id
 								return &cs, nil
@@ -166,7 +166,7 @@ var _ = Describe("Cache", func() {
 
 							var v ComplexStruct2
 							err := ehCache.GetObject(ctx, fmt.Sprintf("complex_struct_2#%d", id), &v, time.Second*3, func() (interface{}, error) {
-								time.Sleep(time.Millisecond * 1 * 1)
+								time.Sleep(time.Millisecond * 10)
 								cs := cs2
 								cs.ID = id
 								return &cs, nil

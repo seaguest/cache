@@ -116,7 +116,7 @@ func (c *cache) setObject(key string, obj interface{}, ttl time.Duration) error 
 	c.checkType(typeName, obj, ttl)
 
 	key = c.namespacedKey(key)
-	_, err, _ := c.sfg.Do(key+"set", func() (interface{}, error) {
+	_, err, _ := c.sfg.Do(key+"_set", func() (interface{}, error) {
 		_, err := c.rds.set(key, obj, ttl)
 		if err != nil {
 			return nil, errors.WithStack(err)
