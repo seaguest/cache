@@ -150,7 +150,6 @@ var _ = Describe("Cache", func() {
 							Ω(err).ToNot(HaveOccurred())
 							Ω(&v).To(Equal(&cs))
 							time.Sleep(time.Millisecond * 10)
-							return
 						}
 					}(j)
 				}
@@ -175,7 +174,6 @@ var _ = Describe("Cache", func() {
 							Ω(err).ToNot(HaveOccurred())
 							Ω(&v).To(Equal(&cs))
 							time.Sleep(time.Millisecond * 10)
-							return
 						}
 					}(j)
 				}
