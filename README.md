@@ -120,6 +120,12 @@ type Cache interface {
     
     Delete(key string) error
     
+    // FlushMem clean all mem cache
+    FlushMem()
+    
+    // FlushRedis clean all redis cache
+    FlushRedis() error
+    
     // Disable GetObject will call loader function in case cache is disabled.
     Disable()
 }
@@ -162,20 +168,6 @@ func (p *TestStruct) DeepCopy() interface{} {
 	return &c
 }
 
-func getStruct(ctx context.Context, id uint32, cache cache.Cache) (*TestStruct, error) {
-	var v TestStruct
-	err := cache.GetObject(ctx, fmt.Sprintf("TestStruct:%d", id), &v, time.Second*3, func() (interface{}, error) {
-		// data fetch logic to be done here
-		time.Sleep(time.Millisecond * 1200 * 1)
-		return &TestStruct{Name: "test"}, nil
-	})
-	if err != nil {
-		fmt.Printf("%+v", err)
-		return nil, err
-	}
-	return &v, nil
-}
-
 func main() {
 	pool := &redis.Pool{
 		MaxIdle:     1000,
@@ -191,21 +183,28 @@ func main() {
 		},
 	}
 
-	supercache := cache.New(
+	ehCache := cache.New(
 		cache.GetConn(pool.Get),
 		cache.OnMetric(func(key string, metric cache.MetricType, elapsedTime time.Duration) {
-			log.Println("x---------", key, "-", metric, "-", elapsedTime)
+			// handle metric
 		}),
 		cache.OnError(func(err error) {
-			log.Printf("%+v", err)
+			// handle error
 		}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()
-	v, e := getStruct(ctx, 100, supercache)
-	log.Println(v, e)
+
+	var v TestStruct
+	err := ehCache.GetObject(ctx, fmt.Sprintf("TestStruct:%d", 100), &v, time.Second*3, func() (interface{}, error) {
+		// data fetch logic to be done here
+		time.Sleep(time.Millisecond * 1200 * 1)
+		return &TestStruct{Name: "test"}, nil
+	})
+	log.Println(v, err)
 }
+
 
 ```
 

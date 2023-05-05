@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"fmt"
-	"log"
 	"reflect"
 	"strings"
 	"sync"
@@ -32,7 +31,7 @@ type Cache interface {
 	Delete(key string) error
 
 	// FlushMem clean all mem cache
-	FlushMem() error
+	FlushMem()
 
 	// FlushRedis clean all redis cache
 	FlushRedis() error
@@ -168,8 +167,6 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 	typeName := getTypeName(obj)
 	c.checkType(typeName, obj, ttl)
 
-	log.Println("002-------start")
-
 	var it *Item
 	defer func() {
 		if c.options.OnMetric != nil {
@@ -203,7 +200,6 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 		} else {
 			metricType = MetricTypeMemHitExpired
 		}
-		log.Println("003-------mem found-", metricType)
 		return
 	}
 
@@ -222,17 +218,12 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 			} else {
 				metricType = MetricTypeRedisHitExpired
 			}
-			log.Println("004-------redis found-", metricType)
 			return v, nil
 		}
 
 		metricType = MetricTypeMiss
-		log.Println("005-------loadfunc-", metricType)
-		fmt.Println("2*************----", err)
 		return c.resetObject(key, ttl, f)
 	})
-	log.Println("2-----------------", itf, err)
-
 	if err != nil {
 		return
 	}
@@ -275,21 +266,18 @@ func (c *cache) resetObject(key string, ttl time.Duration, f func() (interface{}
 		})
 		return
 	})
-	log.Println("1-----------------", itf, err)
 	if err != nil {
 		return nil, err
 	}
 	return itf.(*Item), nil
 }
 
-func (c *cache) FlushMem() error {
-	c.mem.Flush()
-	return nil
+func (c *cache) FlushMem() {
+	c.mem.flush()
 }
 
 func (c *cache) FlushRedis() error {
-	c.rds.Flush(c.options.Namespace + ":")
-	return nil
+	return c.rds.flush(c.options.Namespace + ":")
 }
 
 // Delete notify all cache instances to delete cache key
@@ -437,8 +425,6 @@ func (c *cache) onAction(ar *actionRequest) {
 
 // notifyAll will broadcast the cache change to all cache instances
 func (c *cache) notifyAll(ar *actionRequest) {
-	fmt.Println("notifyAll...", ar)
-
 	bs, err := json.Marshal(ar.Object)
 	if err != nil {
 		c.options.OnError(errors.WithStack(err))

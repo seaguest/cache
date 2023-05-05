@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -70,8 +69,6 @@ func (c *redisCache) delete(key string) (err error) {
 		}
 	}()
 
-	fmt.Println("delete redis...", key)
-
 	_, err = conn.Do("DEL", key)
 	return
 }
@@ -104,7 +101,7 @@ func (c *redisCache) getString(key string) (value string, err error) {
 	return
 }
 
-func (c *redisCache) Flush(prefix string) (err error) {
+func (c *redisCache) flush(prefix string) (err error) {
 	conn := c.getConn()
 	defer func() {
 		if err == nil {

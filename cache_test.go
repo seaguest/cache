@@ -3,7 +3,6 @@ package cache_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"math"
 	"time"
@@ -77,7 +76,7 @@ var _ = Describe("Cache", func() {
 
 					}),
 					cache.OnError(func(err error) {
-						log.Printf("xxxxxxxxx-----------------%+v", err)
+						log.Printf("OnError:%+v", err)
 					}),
 				)
 			})
@@ -97,10 +96,9 @@ var _ = Describe("Cache", func() {
 				var v TestStruct
 				err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
 				if err != nil {
-					fmt.Printf("%+v", err)
+					log.Printf("%+v", err)
 					return
 				}
-				log.Println(v, err)
 
 				Ω(err).ToNot(HaveOccurred())
 				Ω(&v).To(Equal(val))
@@ -109,8 +107,6 @@ var _ = Describe("Cache", func() {
 				Ω(mc.Key).To(Equal(key))
 				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
 				Ω(math.Abs(float64(mc.ElapsedTime-delay)) < float64(time.Millisecond*10)).To(Equal(true))
-
-				log.Println("001-------", mc)
 			})
 
 			It("loadFunc error", func() {
@@ -127,7 +123,7 @@ var _ = Describe("Cache", func() {
 				var v TestStruct
 				err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
 				if err != nil {
-					fmt.Printf("%+v", err)
+					log.Printf("%+v", err)
 					return
 				}
 				Ω(err).To(Equal(unkownErr))
@@ -138,8 +134,9 @@ var _ = Describe("Cache", func() {
 			})
 
 			It("loadFunc panic string", func() {
+				panicMsg := "panic string"
 				loadFunc := func() (interface{}, error) {
-					panic("panic")
+					panic(panicMsg)
 					return val, nil
 				}
 
@@ -148,7 +145,7 @@ var _ = Describe("Cache", func() {
 
 				var v TestStruct
 				err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
-				Ω(err.Error()).To(Equal("panic"))
+				Ω(err.Error()).To(Equal(panicMsg))
 
 				mc := <-metricChan
 				Ω(mc.Key).To(Equal(key))
@@ -157,9 +154,9 @@ var _ = Describe("Cache", func() {
 			})
 
 			It("loadFunc panic error", func() {
-				unknownErr := errors.New("unknown")
+				panicErr := errors.New("panic error")
 				loadFunc := func() (interface{}, error) {
-					panic(unknownErr)
+					panic(panicErr)
 					return val, nil
 				}
 
@@ -168,7 +165,7 @@ var _ = Describe("Cache", func() {
 
 				var v TestStruct
 				err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
-				Ω(errors.Is(err, unknownErr)).To(Equal(true))
+				Ω(errors.Is(err, panicErr)).To(Equal(true))
 
 				mc := <-metricChan
 				Ω(mc.Key).To(Equal(key))
@@ -213,7 +210,7 @@ var _ = Describe("Cache", func() {
 
 					}),
 					cache.OnError(func(err error) {
-						log.Printf("xxxxxxxxx-----------------%+v", err)
+						log.Printf("OnError:%+v", err)
 					}),
 				)
 			})
@@ -240,6 +237,8 @@ var _ = Describe("Cache", func() {
 
 				ehCache.FlushMem()
 
+				ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
 				err = ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
 				Ω(err).ToNot(HaveOccurred())
 				Ω(&v).To(Equal(val))
@@ -247,8 +246,6 @@ var _ = Describe("Cache", func() {
 				mc = <-metricChan
 				Ω(mc.Key).To(Equal(key))
 				Ω(mc.Type).To(Equal(cache.MetricTypeRedisHit))
-
-				log.Println("001-------", mc)
 			})
 
 			It("redis hit expired", func() {
@@ -275,6 +272,8 @@ var _ = Describe("Cache", func() {
 				time.Sleep(time.Second * 2)
 				ehCache.FlushMem()
 
+				ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
 				err = ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
 				Ω(err).ToNot(HaveOccurred())
 				Ω(&v).To(Equal(val))
@@ -282,8 +281,6 @@ var _ = Describe("Cache", func() {
 				mc = <-metricChan
 				Ω(mc.Key).To(Equal(key))
 				Ω(mc.Type).To(Equal(cache.MetricTypeRedisHitExpired))
-
-				log.Println("001-------", mc)
 			})
 		})
 
@@ -302,7 +299,7 @@ var _ = Describe("Cache", func() {
 
 					}),
 					cache.OnError(func(err error) {
-						log.Printf("xxxxxxxxx-----------------%+v", err)
+						log.Printf("OnError:%+v", err)
 					}),
 				)
 			})
@@ -329,6 +326,8 @@ var _ = Describe("Cache", func() {
 
 				time.Sleep(time.Millisecond)
 
+				ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
 				err = ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
 				Ω(err).ToNot(HaveOccurred())
 				Ω(&v).To(Equal(val))
@@ -336,8 +335,6 @@ var _ = Describe("Cache", func() {
 				mc = <-metricChan
 				Ω(mc.Key).To(Equal(key))
 				Ω(mc.Type).To(Equal(cache.MetricTypeMemHit))
-
-				log.Println("001-------", mc)
 			})
 
 			It("mem hit expired", func() {
@@ -361,17 +358,17 @@ var _ = Describe("Cache", func() {
 				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
 
 				// wait 2 second
-				time.Sleep(time.Second * 1)
+				time.Sleep(time.Millisecond * 2000)
 
+				ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
 				err = ehCache.GetObject(ctx, key, &v, time.Second*1, loadFunc)
 				Ω(err).ToNot(HaveOccurred())
 				Ω(&v).To(Equal(val))
 
 				mc = <-metricChan
 				Ω(mc.Key).To(Equal(key))
-				Ω(mc.Type).To(Equal(cache.MetricTypeRedisHitExpired))
-
-				log.Println("001-------", mc)
+				Ω(mc.Type).To(Equal(cache.MetricTypeMemHitExpired))
 			})
 		})
 
