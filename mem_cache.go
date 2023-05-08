@@ -1,4 +1,3 @@
-// Package cache inspired from https://github.com/patrickmn/go-cache
 package cache
 
 import (

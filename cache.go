@@ -357,7 +357,7 @@ type objectType struct {
 // actionRequest defines an entity which will be broadcast to all cache instances
 type actionRequest struct {
 	// cacheSet or cacheDelete
-	Action cacheAction `json:"actionRequest"`
+	Action cacheAction `json:"action"`
 
 	// the type_name of the target object
 	TypeName string `json:"type_name"`
