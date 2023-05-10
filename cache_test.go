@@ -85,7 +85,6 @@ var _ = Describe("Cache", func() {
 				ehCache.Delete(key)
 
 				loadFunc := func() (interface{}, error) {
-					// data fetch logic to be done here
 					time.Sleep(delay)
 					return val, nil
 				}
@@ -95,11 +94,6 @@ var _ = Describe("Cache", func() {
 
 				var v TestStruct
 				err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
-				if err != nil {
-					log.Printf("%+v", err)
-					return
-				}
-
 				Ω(err).ToNot(HaveOccurred())
 				Ω(&v).To(Equal(val))
 
@@ -122,10 +116,6 @@ var _ = Describe("Cache", func() {
 
 				var v TestStruct
 				err := ehCache.GetObject(ctx, key, &v, time.Second*3, loadFunc)
-				if err != nil {
-					log.Printf("%+v", err)
-					return
-				}
 				Ω(err).To(Equal(unkownErr))
 
 				mc := <-metricChan
@@ -218,7 +208,6 @@ var _ = Describe("Cache", func() {
 			It("redis hit ok", func() {
 				ehCache.Delete(key)
 				loadFunc := func() (interface{}, error) {
-					// data fetch logic to be done here
 					time.Sleep(delay)
 					return val, nil
 				}
@@ -251,7 +240,6 @@ var _ = Describe("Cache", func() {
 			It("redis hit expired", func() {
 				ehCache.Delete(key)
 				loadFunc := func() (interface{}, error) {
-					// data fetch logic to be done here
 					time.Sleep(delay)
 					return val, nil
 				}
@@ -307,7 +295,6 @@ var _ = Describe("Cache", func() {
 			It("mem hit ok", func() {
 				ehCache.Delete(key)
 				loadFunc := func() (interface{}, error) {
-					// data fetch logic to be done here
 					time.Sleep(delay)
 					return val, nil
 				}
@@ -340,7 +327,6 @@ var _ = Describe("Cache", func() {
 			It("mem hit expired", func() {
 				ehCache.Delete(key)
 				loadFunc := func() (interface{}, error) {
-					// data fetch logic to be done here
 					time.Sleep(delay)
 					return val, nil
 				}

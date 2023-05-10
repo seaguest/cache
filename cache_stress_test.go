@@ -43,11 +43,23 @@ type ComplexStruct2 struct {
 
 func (p *ComplexStruct1) DeepCopy() interface{} {
 	c := *p
+	if p.MapField != nil {
+		c.MapField = make(map[string]int)
+		for k, v := range p.MapField {
+			c.MapField[k] = v
+		}
+	}
 	return &c
 }
 
 func (p *ComplexStruct2) DeepCopy() interface{} {
 	c := *p
+	if p.MapField != nil {
+		c.MapField = make(map[string]int)
+		for k, v := range p.MapField {
+			c.MapField[k] = v
+		}
+	}
 	return &c
 }
 
@@ -146,9 +158,12 @@ var _ = Describe("Cache", func() {
 								cs.ID = id
 								return &cs, nil
 							})
+							if err != nil {
+								log.Println(err)
+							}
 
 							Ω(err).ToNot(HaveOccurred())
-							Ω(&v).To(Equal(&cs))
+							Ω(v).To(Equal(cs))
 							time.Sleep(time.Millisecond * 10)
 						}
 					}(j)
@@ -170,9 +185,12 @@ var _ = Describe("Cache", func() {
 								cs.ID = id
 								return &cs, nil
 							})
+							if err != nil {
+								log.Println(err)
+							}
 
 							Ω(err).ToNot(HaveOccurred())
-							Ω(&v).To(Equal(&cs))
+							Ω(v).To(Equal(cs))
 							time.Sleep(time.Millisecond * 10)
 						}
 					}(j)
