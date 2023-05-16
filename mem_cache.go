@@ -53,10 +53,6 @@ func (c *memCache) runJanitor() {
 	}
 }
 
-func (c *memCache) flush() {
-	c.items = sync.Map{}
-}
-
 // DeleteExpired delete all expired items from the memcache.
 func (c *memCache) DeleteExpired() {
 	c.items.Range(func(key, value interface{}) bool {

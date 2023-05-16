@@ -63,11 +63,7 @@ func (c *redisCache) set(key string, obj interface{}, ttl time.Duration) (*Item,
 
 func (c *redisCache) delete(key string) (err error) {
 	conn := c.getConn()
-	defer func() {
-		if err == nil {
-			err = conn.Close()
-		}
-	}()
+	defer conn.Close()
 
 	_, err = conn.Do("DEL", key)
 	return
@@ -75,11 +71,7 @@ func (c *redisCache) delete(key string) (err error) {
 
 func (c *redisCache) setString(key, value string, ttl int) (err error) {
 	conn := c.getConn()
-	defer func() {
-		if err == nil {
-			err = conn.Close()
-		}
-	}()
+	defer conn.Close()
 
 	if ttl == 0 {
 		_, err = conn.Do("SET", key, value)
@@ -91,31 +83,8 @@ func (c *redisCache) setString(key, value string, ttl int) (err error) {
 
 func (c *redisCache) getString(key string) (value string, err error) {
 	conn := c.getConn()
-	defer func() {
-		if err == nil {
-			err = conn.Close()
-		}
-	}()
+	defer conn.Close()
 
 	value, err = redis.String(conn.Do("GET", key))
-	return
-}
-
-func (c *redisCache) flush(prefix string) (err error) {
-	conn := c.getConn()
-	defer func() {
-		if err == nil {
-			err = conn.Close()
-		}
-	}()
-
-	keys, err := redis.Strings(conn.Do("KEYS", prefix+"*"))
-	if err != nil {
-		return
-	}
-
-	for _, key := range keys {
-		_, err = conn.Do("DEL", key)
-	}
 	return
 }

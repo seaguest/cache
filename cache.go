@@ -30,14 +30,14 @@ type Cache interface {
 
 	Delete(key string) error
 
-	// FlushMem clean all mem cache
-	FlushMem()
-
-	// FlushRedis clean all redis cache
-	FlushRedis() error
-
 	// Disable GetObject will call loader function in case cache is disabled.
 	Disable()
+
+	// DeleteFromMem allows to delete key from mem, for test purpose
+	DeleteFromMem(key string)
+
+	// DeleteFromRedis allows to delete key from redis, for test purpose
+	DeleteFromRedis(key string) error
 }
 
 type cache struct {
@@ -163,7 +163,7 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 	}
 
 	start := time.Now()
-	var metricType MetricType
+	var metricType string
 	typeName := getTypeName(obj)
 	c.checkType(typeName, obj, ttl)
 
@@ -272,12 +272,14 @@ func (c *cache) resetObject(key string, ttl time.Duration, f func() (interface{}
 	return itf.(*Item), nil
 }
 
-func (c *cache) FlushMem() {
-	c.mem.flush()
+func (c *cache) DeleteFromMem(key string) {
+	key = c.namespacedKey(key)
+	c.mem.delete(key)
 }
 
-func (c *cache) FlushRedis() error {
-	return c.rds.flush(c.options.Namespace + ":")
+func (c *cache) DeleteFromRedis(key string) error {
+	key = c.namespacedKey(key)
+	return c.rds.delete(key)
 }
 
 // Delete notify all cache instances to delete cache key
@@ -300,7 +302,7 @@ func (c *cache) Delete(key string) error {
 func (c *cache) checkType(typeName string, obj interface{}, ttl time.Duration) {
 	_, ok := c.types.Load(typeName)
 	if !ok {
-		c.types.Store(typeName, &objectType{typ: obj, ttl: ttl})
+		c.types.Store(typeName, &objectType{typ: deepcopy.Copy(obj), ttl: ttl})
 	}
 }
 
@@ -390,36 +392,33 @@ func (c *cache) watch() {
 	for {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
-			var msg actionRequest
-			if err := json.Unmarshal(v.Data, &msg); err != nil {
+			var ar actionRequest
+			if err := json.Unmarshal(v.Data, &ar); err != nil {
 				c.options.OnError(errors.WithStack(err))
 				continue
 			}
-			c.onAction(&msg)
+
+			switch ar.Action {
+			case cacheSet:
+				objType, ok := c.types.Load(ar.TypeName)
+				if !ok {
+					return
+				}
+
+				obj := deepcopy.Copy(objType.(*objectType).typ)
+				if err := json.Unmarshal(ar.Payload, obj); err != nil {
+					c.options.OnError(errors.WithStack(err))
+					return
+				}
+
+				it := newItem(obj, objType.(*objectType).ttl)
+				c.mem.set(ar.Key, it)
+			case cacheDelete:
+				c.mem.delete(ar.Key)
+			}
 		case error:
 			c.options.OnError(errors.WithStack(v))
 		}
-	}
-}
-
-func (c *cache) onAction(ar *actionRequest) {
-	switch ar.Action {
-	case cacheSet:
-		objType, ok := c.types.Load(ar.TypeName)
-		if !ok {
-			return
-		}
-
-		obj := deepcopy.Copy(objType.(*objectType).typ)
-		if err := json.Unmarshal(ar.Payload, obj); err != nil {
-			c.options.OnError(errors.WithStack(err))
-			return
-		}
-
-		it := newItem(obj, objType.(*objectType).ttl)
-		c.mem.set(ar.Key, it)
-	case cacheDelete:
-		c.mem.delete(ar.Key)
 	}
 }
 

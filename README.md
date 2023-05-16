@@ -120,14 +120,14 @@ type Cache interface {
     
     Delete(key string) error
     
-    // FlushMem clean all mem cache
-    FlushMem()
-    
-    // FlushRedis clean all redis cache
-    FlushRedis() error
-    
     // Disable GetObject will call loader function in case cache is disabled.
     Disable()
+    
+    // DeleteFromMem allows to delete key from mem, for test purpose
+    DeleteFromMem(key string)
+    
+    // DeleteFromRedis allows to delete key from redis, for test purpose
+    DeleteFromRedis(key string) error
 }
 ```
 

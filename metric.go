@@ -1,12 +1,9 @@
 package cache
 
-type MetricType int
-
 const (
-	MetricTypeUnknown MetricType = iota
-	MetricTypeMemHit
-	MetricTypeMemHitExpired
-	MetricTypeRedisHit
-	MetricTypeRedisHitExpired
-	MetricTypeMiss
+	MetricTypeMemHit          = "mem_hit"
+	MetricTypeMemHitExpired   = "mem_hit_expired"
+	MetricTypeRedisHit        = "redis_hit"
+	MetricTypeRedisHitExpired = "redis_hit_expired"
+	MetricTypeMiss            = "miss"
 )

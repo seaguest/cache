@@ -84,10 +84,10 @@ var _ = Describe("Cache", func() {
 
 		BeforeEach(func() {
 			pool = &redis.Pool{
-				MaxIdle:     1000,
-				MaxActive:   1000,
+				MaxIdle:     2,
+				MaxActive:   5,
 				Wait:        true,
-				IdleTimeout: 240 * time.Second,
+				IdleTimeout: 300 * time.Second,
 				TestOnBorrow: func(c redis.Conn, t time.Time) error {
 					_, err := c.Do("PING")
 					return err
@@ -141,13 +141,13 @@ var _ = Describe("Cache", func() {
 				)
 			})
 
+			bgCtx := context.Background()
+
 			It("stress test", func() {
 				for j := 0; j < 100; j++ {
 					go func(id int) {
 						for {
-							ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
-							defer cancel()
-
+							ctx, _ := context.WithTimeout(bgCtx, time.Second*2)
 							cs := cs1
 							cs.ID = id
 
@@ -161,7 +161,6 @@ var _ = Describe("Cache", func() {
 							if err != nil {
 								log.Println(err)
 							}
-
 							Ω(err).ToNot(HaveOccurred())
 							Ω(v).To(Equal(cs))
 							time.Sleep(time.Millisecond * 10)
@@ -172,9 +171,7 @@ var _ = Describe("Cache", func() {
 				for j := 0; j < 100; j++ {
 					go func(id int) {
 						for {
-							ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
-							defer cancel()
-
+							ctx, _ := context.WithTimeout(bgCtx, time.Second*2)
 							cs := cs2
 							cs.ID = id
 
@@ -188,7 +185,6 @@ var _ = Describe("Cache", func() {
 							if err != nil {
 								log.Println(err)
 							}
-
 							Ω(err).ToNot(HaveOccurred())
 							Ω(v).To(Equal(cs))
 							time.Sleep(time.Millisecond * 10)

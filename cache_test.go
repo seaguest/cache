@@ -19,7 +19,7 @@ type TestStruct struct {
 
 type metric struct {
 	Key         string
-	Type        cache.MetricType
+	Type        string
 	ElapsedTime time.Duration
 }
 
@@ -35,9 +35,9 @@ var _ = Describe("Cache", func() {
 			pool       *redis.Pool
 			ehCache    cache.Cache
 			metricChan chan *metric
-			val        *TestStruct
-			key        string
-			delay      time.Duration
+			val        = &TestStruct{Name: "test"}
+			key        = "test#1"
+			delay      = time.Millisecond * 1200
 		)
 
 		BeforeEach(func() {
@@ -55,10 +55,6 @@ var _ = Describe("Cache", func() {
 				},
 			}
 			metricChan = make(chan *metric, 1)
-
-			val = &TestStruct{Name: "test"}
-			key = "test#1"
-			delay = time.Millisecond * 1200
 		})
 
 		Context("Test loadFunc", func() {
@@ -66,7 +62,7 @@ var _ = Describe("Cache", func() {
 				ehCache = cache.New(
 					cache.GetConn(pool.Get),
 					cache.CleanInterval(time.Second),
-					cache.OnMetric(func(key string, metricType cache.MetricType, elapsedTime time.Duration) {
+					cache.OnMetric(func(key string, metricType string, elapsedTime time.Duration) {
 						mc := &metric{
 							Key:         key,
 							Type:        metricType,
@@ -190,7 +186,7 @@ var _ = Describe("Cache", func() {
 				ehCache = cache.New(
 					cache.GetConn(pool.Get),
 					cache.CleanInterval(time.Second),
-					cache.OnMetric(func(key string, metricType cache.MetricType, elapsedTime time.Duration) {
+					cache.OnMetric(func(key string, metricType string, elapsedTime time.Duration) {
 						mc := &metric{
 							Key:         key,
 							Type:        metricType,
@@ -224,7 +220,8 @@ var _ = Describe("Cache", func() {
 				Ω(mc.Key).To(Equal(key))
 				Ω(mc.Type).To(Equal(cache.MetricTypeMiss))
 
-				ehCache.FlushMem()
+				time.Sleep(time.Millisecond * 10)
+				ehCache.DeleteFromMem(key)
 
 				ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
 				defer cancel()
@@ -258,7 +255,7 @@ var _ = Describe("Cache", func() {
 
 				// wait 2 second
 				time.Sleep(time.Second * 2)
-				ehCache.FlushMem()
+				ehCache.DeleteFromMem(key)
 
 				ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
 				defer cancel()
@@ -277,7 +274,7 @@ var _ = Describe("Cache", func() {
 				ehCache = cache.New(
 					cache.GetConn(pool.Get),
 					cache.CleanInterval(time.Second*2),
-					cache.OnMetric(func(key string, metricType cache.MetricType, elapsedTime time.Duration) {
+					cache.OnMetric(func(key string, metricType string, elapsedTime time.Duration) {
 						mc := &metric{
 							Key:         key,
 							Type:        metricType,
