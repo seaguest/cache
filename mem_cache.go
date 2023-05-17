@@ -22,8 +22,8 @@ func newMemCache(ci time.Duration) *memCache {
 }
 
 // get an item from the memcache. Returns the item or nil, and a bool indicating whether the key was found.
-func (c *memCache) get(k string) *Item {
-	tmp, ok := c.items.Load(k)
+func (c *memCache) get(key string) *Item {
+	tmp, ok := c.items.Load(key)
 	if !ok {
 		return nil
 	}
@@ -31,13 +31,13 @@ func (c *memCache) get(k string) *Item {
 	return tmp.(*Item)
 }
 
-func (c *memCache) set(k string, it *Item) {
-	c.items.Store(k, it)
+func (c *memCache) set(key string, it *Item) {
+	c.items.Store(key, it)
 }
 
 // Delete an item from the memcache. Does nothing if the key is not in the memcache.
-func (c *memCache) delete(k string) {
-	c.items.Delete(k)
+func (c *memCache) delete(key string) {
+	c.items.Delete(key)
 }
 
 // start key scanning to delete expired keys

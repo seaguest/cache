@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 	"time"
 
@@ -115,9 +114,9 @@ func (c *cache) setObject(key string, obj interface{}, ttl time.Duration) error 
 	typeName := getTypeName(obj)
 	c.checkType(typeName, obj, ttl)
 
-	key = c.namespacedKey(key)
-	_, err, _ := c.sfg.Do(key+"_set", func() (interface{}, error) {
-		_, err := c.rds.set(key, obj, ttl)
+	namespacedKey := c.namespacedKey(key)
+	_, err, _ := c.sfg.Do(namespacedKey+"_set", func() (interface{}, error) {
+		_, err := c.rds.set(namespacedKey, obj, ttl)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
@@ -125,7 +124,7 @@ func (c *cache) setObject(key string, obj interface{}, ttl time.Duration) error 
 		c.notifyAll(&actionRequest{
 			Action:   cacheSet,
 			TypeName: typeName,
-			Key:      key,
+			Key:      namespacedKey,
 			Object:   obj,
 		})
 		return nil, nil
@@ -167,11 +166,13 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 	typeName := getTypeName(obj)
 	c.checkType(typeName, obj, ttl)
 
+	namespacedKey := c.namespacedKey(key)
+
 	var it *Item
 	defer func() {
 		if c.options.OnMetric != nil {
 			elapsedTime := time.Since(start)
-			c.options.OnMetric(c.unNamespacedKey(key), metricType, elapsedTime)
+			c.options.OnMetric(key, metricType, elapsedTime)
 		}
 
 		// deepcopy before return
@@ -182,7 +183,7 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 		// if hit but expired, then do a fresh load
 		if metricType == MetricTypeMemHitExpired || metricType == MetricTypeRedisHitExpired {
 			go func() {
-				_, resetErr := c.resetObject(key, ttl, f)
+				_, resetErr := c.resetObject(namespacedKey, ttl, f)
 				if resetErr != nil {
 					c.options.OnError(errors.WithStack(resetErr))
 					return
@@ -191,9 +192,8 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 		}
 	}()
 
-	key = c.namespacedKey(key)
 	// try to retrieve from local cache, return if found
-	it = c.mem.get(key)
+	it = c.mem.get(namespacedKey)
 	if it != nil {
 		if !it.Expired() {
 			metricType = MetricTypeMemHit
@@ -204,9 +204,9 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 	}
 
 	var itf interface{}
-	itf, err, _ = c.sfg.Do(key+"_get", func() (interface{}, error) {
+	itf, err, _ = c.sfg.Do(namespacedKey+"_get", func() (interface{}, error) {
 		// try to retrieve from redis, return if found
-		v, redisErr := c.rds.get(key, obj)
+		v, redisErr := c.rds.get(namespacedKey, obj)
 		if redisErr != nil {
 			return nil, errors.WithStack(redisErr)
 		}
@@ -214,7 +214,7 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 			if !v.Expired() {
 				metricType = MetricTypeRedisHit
 				// update memory cache since it is not previously found in mem
-				c.mem.set(key, v)
+				c.mem.set(namespacedKey, v)
 			} else {
 				metricType = MetricTypeRedisHitExpired
 			}
@@ -222,7 +222,7 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 		}
 
 		metricType = MetricTypeMiss
-		return c.resetObject(key, ttl, f)
+		return c.resetObject(namespacedKey, ttl, f)
 	})
 	if err != nil {
 		return
@@ -232,8 +232,8 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 }
 
 // resetObject load fresh data to redis and in-memory with loader function
-func (c *cache) resetObject(key string, ttl time.Duration, f func() (interface{}, error)) (*Item, error) {
-	itf, err, _ := c.sfg.Do(key+"_reset", func() (it interface{}, err error) {
+func (c *cache) resetObject(namespacedKey string, ttl time.Duration, f func() (interface{}, error)) (*Item, error) {
+	itf, err, _ := c.sfg.Do(namespacedKey+"_reset", func() (it interface{}, err error) {
 		defer func() {
 			if r := recover(); r != nil {
 				switch v := r.(type) {
@@ -252,7 +252,7 @@ func (c *cache) resetObject(key string, ttl time.Duration, f func() (interface{}
 			return
 		}
 
-		it, err = c.rds.set(key, o, ttl)
+		it, err = c.rds.set(namespacedKey, o, ttl)
 		if err != nil {
 			return
 		}
@@ -261,7 +261,7 @@ func (c *cache) resetObject(key string, ttl time.Duration, f func() (interface{}
 		c.notifyAll(&actionRequest{
 			Action:   cacheSet,
 			TypeName: getTypeName(o),
-			Key:      key,
+			Key:      namespacedKey,
 			Object:   o,
 		})
 		return
@@ -273,27 +273,27 @@ func (c *cache) resetObject(key string, ttl time.Duration, f func() (interface{}
 }
 
 func (c *cache) DeleteFromMem(key string) {
-	key = c.namespacedKey(key)
-	c.mem.delete(key)
+	namespacedKey := c.namespacedKey(key)
+	c.mem.delete(namespacedKey)
 }
 
 func (c *cache) DeleteFromRedis(key string) error {
-	key = c.namespacedKey(key)
-	return c.rds.delete(key)
+	namespacedKey := c.namespacedKey(key)
+	return c.rds.delete(namespacedKey)
 }
 
 // Delete notify all cache instances to delete cache key
 func (c *cache) Delete(key string) error {
-	key = c.namespacedKey(key)
+	namespacedKey := c.namespacedKey(key)
 
 	// delete redis, then pub to delete cache
-	if err := c.rds.delete(key); err != nil {
+	if err := c.rds.delete(namespacedKey); err != nil {
 		return errors.WithStack(err)
 	}
 
 	c.notifyAll(&actionRequest{
 		Action: cacheDelete,
-		Key:    key,
+		Key:    namespacedKey,
 	})
 	return nil
 }
@@ -334,10 +334,6 @@ func getTypeName(obj interface{}) string {
 
 func (c *cache) namespacedKey(key string) string {
 	return c.options.Namespace + ":" + key
-}
-
-func (c *cache) unNamespacedKey(key string) string {
-	return strings.TrimPrefix(key, c.options.Namespace+":")
 }
 
 type cacheAction int
@@ -438,14 +434,7 @@ func (c *cache) notifyAll(ar *actionRequest) {
 	}
 
 	conn := c.options.GetConn()
-	defer func() {
-		if err == nil {
-			err = conn.Close()
-			if err != nil {
-				c.options.OnError(errors.WithStack(err))
-			}
-		}
-	}()
+	defer conn.Close()
 
 	_, err = conn.Do("PUBLISH", c.actionChannel(), string(msgBody))
 	if err != nil {
