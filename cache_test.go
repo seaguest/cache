@@ -63,6 +63,10 @@ var _ = Describe("Cache", func() {
 					cache.GetConn(pool.Get),
 					cache.CleanInterval(time.Second),
 					cache.OnMetric(func(key string, metricType string, elapsedTime time.Duration) {
+						// this could be asynchronous load inside reset, ignore
+						if metricType == cache.MetricTypeLoad {
+							return
+						}
 						mc := &metric{
 							Key:         key,
 							Type:        metricType,
@@ -187,6 +191,10 @@ var _ = Describe("Cache", func() {
 					cache.GetConn(pool.Get),
 					cache.CleanInterval(time.Second),
 					cache.OnMetric(func(key string, metricType string, elapsedTime time.Duration) {
+						// this could be asynchronous load inside reset, ignore
+						if metricType == cache.MetricTypeLoad {
+							return
+						}
 						mc := &metric{
 							Key:         key,
 							Type:        metricType,
@@ -275,6 +283,10 @@ var _ = Describe("Cache", func() {
 					cache.GetConn(pool.Get),
 					cache.CleanInterval(time.Second*2),
 					cache.OnMetric(func(key string, metricType string, elapsedTime time.Duration) {
+						// this could be asynchronous load inside reset, ignore
+						if metricType == cache.MetricTypeLoad {
+							return
+						}
 						mc := &metric{
 							Key:         key,
 							Type:        metricType,

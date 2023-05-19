@@ -6,4 +6,5 @@ const (
 	MetricTypeRedisHit        = "redis_hit"
 	MetricTypeRedisHitExpired = "redis_hit_expired"
 	MetricTypeMiss            = "miss"
+	MetricTypeLoad            = "load"
 )

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,12 +168,10 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 	c.checkType(typeName, obj, ttl)
 
 	namespacedKey := c.namespacedKey(key)
-
 	var it *Item
 	defer func() {
 		if c.options.OnMetric != nil {
-			elapsedTime := time.Since(start)
-			c.options.OnMetric(key, metricType, elapsedTime)
+			c.options.OnMetric(key, metricType, time.Since(start))
 		}
 
 		// deepcopy before return
@@ -234,7 +233,14 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 // resetObject load fresh data to redis and in-memory with loader function
 func (c *cache) resetObject(namespacedKey string, ttl time.Duration, f func() (interface{}, error)) (*Item, error) {
 	itf, err, _ := c.sfg.Do(namespacedKey+"_reset", func() (it interface{}, err error) {
+		start := time.Now()
 		defer func() {
+			// add metric for a fresh load
+			if c.options.OnMetric != nil {
+				key := strings.TrimPrefix(namespacedKey, c.options.Namespace+":")
+				c.options.OnMetric(key, MetricTypeLoad, time.Since(start))
+			}
+
 			if r := recover(); r != nil {
 				switch v := r.(type) {
 				case error:
