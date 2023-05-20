@@ -65,7 +65,6 @@ func newMockCache(key string, delay, ci time.Duration, checkMetric bool) mockCac
 				Type:        metricType,
 				ElapsedTime: elapsedTime,
 			}
-			log.Println("METRIC-------------", mc)
 			metricChan <- mc
 		}),
 		cache.OnError(func(err error) {
@@ -79,10 +78,10 @@ func newMockCache(key string, delay, ci time.Duration, checkMetric bool) mockCac
 	return mock
 }
 
-var _ = Describe("Cache", func() {
+var _ = Describe("cache test", func() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
-	Context("Cache", func() {
+	Context("cache unit test", func() {
 		Context("Test loadFunc", func() {
 			It("loadFunc succeed", func() {
 				mock := newMockCache("load_func_succeed#1", time.Millisecond*1200, time.Second, true)

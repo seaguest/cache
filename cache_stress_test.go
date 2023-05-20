@@ -71,7 +71,7 @@ func getRandomString() string {
 	return string(b)
 }
 
-var _ = Describe("Cache", func() {
+var _ = Describe("cache stress", func() {
 	Context("Cache", func() {
 		var (
 			cs1 ComplexStruct1
