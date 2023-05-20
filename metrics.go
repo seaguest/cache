@@ -12,7 +12,7 @@ const (
 	MetricTypeGetRedisHit     = "get_redis_hit"
 	MetricTypeGetRedisMiss    = "get_redis_miss"
 	MetricTypeGetRedisExpired = "get_redis_expired"
-	MetricTypeGetCacheHit     = "get_cache_hit"
+	MetricTypeGetCache        = "get_cache"
 	MetricTypeLoad            = "load"
 	MetricTypeAsyncLoad       = "async_load"
 	MetricTypeSetCache        = "set_cache"

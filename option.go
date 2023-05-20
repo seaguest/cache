@@ -21,8 +21,7 @@ type Options struct {
 	// retrieve redis connection
 	GetConn func() redis.Conn
 
-	// exposed for metrics purpose
-	// key can be composed of type#id, can easily extract type from key
+	// metrics
 	Metric Metrics
 
 	// must be provided for cache initialization, handle internal error

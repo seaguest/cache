@@ -105,14 +105,14 @@ var _ = Describe("cache test", func() {
 				time.Sleep(time.Millisecond * 10)
 
 				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss, cache.MetricTypeSetRedis,
-					cache.MetricTypeLoad, cache.MetricTypeGetCacheHit, cache.MetricTypeSetMem}
+					cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem}
 
 				for idx, metricType := range metricList {
 					select {
 					case mc := <-mock.metricChan:
 						Ω(mc.Key).To(Equal(mock.key))
 						Ω(mc.Type).To(Equal(metricType))
-						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCacheHit && idx == 6) {
+						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCache && idx == 6) {
 							// the first get_cache should be same as delay
 							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
 						} else {
@@ -278,8 +278,8 @@ var _ = Describe("cache test", func() {
 				time.Sleep(time.Millisecond * 10)
 
 				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
-					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCacheHit, cache.MetricTypeSetMem, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
-					cache.MetricTypeGetRedisHit, cache.MetricTypeSetMem, cache.MetricTypeGetCacheHit,
+					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
+					cache.MetricTypeGetRedisHit, cache.MetricTypeSetMem, cache.MetricTypeGetCache,
 				}
 
 				for idx, metricType := range metricList {
@@ -287,7 +287,7 @@ var _ = Describe("cache test", func() {
 					case mc := <-mock.metricChan:
 						Ω(mc.Key).To(Equal(mock.key))
 						Ω(mc.Type).To(Equal(metricType))
-						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCacheHit && idx == 6) {
+						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCache && idx == 6) {
 							// the first get_cache should be same as delay
 							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
 						} else {
@@ -331,8 +331,8 @@ var _ = Describe("cache test", func() {
 			time.Sleep(mock.delay + time.Millisecond*10)
 
 			metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
-				cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCacheHit, cache.MetricTypeSetMem, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
-				cache.MetricTypeGetRedisExpired, cache.MetricTypeGetCacheHit, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeAsyncLoad, cache.MetricTypeSetMem,
+				cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
+				cache.MetricTypeGetRedisExpired, cache.MetricTypeGetCache, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeAsyncLoad, cache.MetricTypeSetMem,
 			}
 
 			for idx, metricType := range metricList {
@@ -340,7 +340,7 @@ var _ = Describe("cache test", func() {
 				case mc := <-mock.metricChan:
 					Ω(mc.Key).To(Equal(mock.key))
 					Ω(mc.Type).To(Equal(metricType))
-					if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad || (mc.Type == cache.MetricTypeGetCacheHit && idx == 6) {
+					if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad || (mc.Type == cache.MetricTypeGetCache && idx == 6) {
 						// the first get_cache should be same as delay
 						Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
 					} else {
@@ -380,7 +380,7 @@ var _ = Describe("cache test", func() {
 				Ω(&v).To(Equal(mock.val))
 
 				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
-					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCacheHit, cache.MetricTypeSetMem, cache.MetricTypeGetMemHit, cache.MetricTypeGetCacheHit,
+					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeGetMemHit, cache.MetricTypeGetCache,
 				}
 
 				for idx, metricType := range metricList {
@@ -388,7 +388,7 @@ var _ = Describe("cache test", func() {
 					case mc := <-mock.metricChan:
 						Ω(mc.Key).To(Equal(mock.key))
 						Ω(mc.Type).To(Equal(metricType))
-						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCacheHit && idx == 6) {
+						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCache && idx == 6) {
 							// the first get_cache should be same as delay
 							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
 						} else {
@@ -430,7 +430,7 @@ var _ = Describe("cache test", func() {
 				time.Sleep(mock.delay + time.Millisecond*10)
 
 				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
-					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCacheHit, cache.MetricTypeSetMem, cache.MetricTypeGetMemExpired, cache.MetricTypeGetCacheHit,
+					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeGetMemExpired, cache.MetricTypeGetCache,
 					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeAsyncLoad, cache.MetricTypeSetMem,
 				}
 
@@ -439,7 +439,7 @@ var _ = Describe("cache test", func() {
 					case mc := <-mock.metricChan:
 						Ω(mc.Key).To(Equal(mock.key))
 						Ω(mc.Type).To(Equal(metricType))
-						if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad || (mc.Type == cache.MetricTypeGetCacheHit && idx == 6) {
+						if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad || (mc.Type == cache.MetricTypeGetCache && idx == 6) {
 							// the first get_cache should be same as delay
 							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
 						} else {

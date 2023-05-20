@@ -116,6 +116,7 @@ type Cache interface {
     SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
     
     // GetObject loader function f() will be called in case cache all miss
+    // suggest to use object#id as key or any other pattern which can easily extract object, aggregate metric for same object in onMetric
     GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error
     
     Delete(key string) error
@@ -185,7 +186,7 @@ func main() {
 
 	ehCache := cache.New(
 		cache.GetConn(pool.Get),
-		cache.OnMetric(func(key string, metric cache.MetricType, elapsedTime time.Duration) {
+		cache.OnMetric(func(key string, metric string, elapsedTime time.Duration) {
 			// handle metric
 		}),
 		cache.OnError(func(err error) {
