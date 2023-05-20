@@ -36,6 +36,10 @@ func (m Metrics) Observe() func(string, interface{}, *error) {
 		if m.onMetric == nil {
 			return
 		}
+		// ignore metric for error case
+		if err != nil && *err != nil {
+			return
+		}
 
 		var metric string
 		switch v := metricType.(type) {
@@ -44,11 +48,6 @@ func (m Metrics) Observe() func(string, interface{}, *error) {
 		case string:
 			metric = v
 		default:
-			return
-		}
-
-		// ignore metric for error case
-		if err != nil && *err != nil {
 			return
 		}
 		key := strings.TrimPrefix(namespacedKey, m.namespace+":")
