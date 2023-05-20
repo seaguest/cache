@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"fmt"
-	"log"
 	"reflect"
 	"sync"
 	"time"
@@ -55,10 +54,6 @@ type cache struct {
 	sfg singleflight.Group
 
 	metric Metrics
-
-	// this chan will listen the request of asynchronous load
-	// goroutine in getObject is not guaranteed to be executed.
-	syncChan chan func()
 }
 
 func New(options ...Option) Cache {
@@ -86,14 +81,12 @@ func New(options ...Option) Cache {
 		panic("need OnError for cache initialization")
 	}
 
-	c.syncChan = make(chan func(), 1000)
 	c.options = opts
 	c.metric = opts.Metric
 	c.metric.namespace = opts.Namespace
 	c.mem = newMemCache(opts.CleanInterval, c.metric)
 	c.rds = newRedisCache(opts.GetConn, opts.RedisTTLFactor, c.metric)
 	go c.watch()
-	go c.load()
 	return c
 }
 
@@ -126,7 +119,6 @@ func (c *cache) setObject(key string, obj interface{}, ttl time.Duration) (err e
 	c.checkType(typeName, obj, ttl)
 
 	namespacedKey := c.namespacedKey(key)
-	// redis hits
 	defer c.metric.Observe()(namespacedKey, MetricTypeSetCache, &err)
 
 	_, err, _ = c.sfg.Do(namespacedKey+"_set", func() (interface{}, error) {
@@ -180,7 +172,6 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 
 	var expired bool
 	namespacedKey := c.namespacedKey(key)
-	// redis hits
 	defer c.metric.Observe()(namespacedKey, MetricTypeGetCache, &err)
 
 	var it *Item
@@ -226,12 +217,10 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 				expired = true
 			} else {
 				// update memory cache since it is not previously found in mem
-				log.Println("set mem from non-expired redis............", namespacedKey)
 				c.mem.set(namespacedKey, v)
 			}
 			return v, nil
 		}
-		log.Println("going to load............")
 		return c.resetObject(namespacedKey, ttl, f)
 	})
 	if err != nil {
@@ -387,13 +376,6 @@ func (c *cache) actionChannel() string {
 	return c.options.Namespace + ":action_channel"
 }
 
-func (c *cache) load() {
-	select {
-	case f := <-c.syncChan:
-		f()
-	}
-}
-
 // watch the cache update
 func (c *cache) watch() {
 	conn := c.options.GetConn()
@@ -414,8 +396,6 @@ func (c *cache) watch() {
 				continue
 			}
 
-			log.Println("redis pub............", ar)
-
 			switch ar.Action {
 			case cacheSet:
 				objType, ok := c.types.Load(ar.TypeName)
@@ -430,8 +410,6 @@ func (c *cache) watch() {
 				}
 
 				it := newItem(obj, objType.(*objectType).ttl)
-				log.Println("set mem from redis pub............", ar.Key)
-
 				c.mem.set(ar.Key, it)
 			case cacheDelete:
 				c.mem.delete(ar.Key)

@@ -1,7 +1,5 @@
 package cache_test
 
-/*package cache_test
-
 import (
 	"context"
 	"fmt"
@@ -199,4 +197,3 @@ var _ = Describe("Cache", func() {
 		})
 	})
 })
-*/

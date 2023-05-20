@@ -12,11 +12,10 @@ const (
 	MetricTypeGetRedis        = "get_redis"
 	MetricTypeGetRedisMiss    = "get_redis_miss"
 	MetricTypeGetRedisExpired = "get_redis_expired"
-	MetricTypeGetMiss         = "get_miss"
+	MetricTypeGetCache        = "get_cache"
 	MetricTypeLoad            = "load"
 	MetricTypeAsyncLoad       = "async_load"
 	MetricTypeSetCache        = "set_cache"
-	MetricTypeGetCache        = "get_cache"
 	MetricTypeSetMem          = "set_mem"
 	MetricTypeSetRedis        = "set_redis"
 	MetricTypeDeleteMem       = "del_mem"
@@ -40,13 +39,14 @@ func (m Metrics) Observe() func(string, interface{}, *error) {
 				metric = *v
 			case string:
 				metric = v
+			default:
+				return
 			}
 
 			// ignore metric for error case
 			if err != nil && *err != nil {
 				return
 			}
-
 			key := strings.TrimPrefix(namespacedKey, m.namespace+":")
 			m.onMetric(key, metric, time.Since(start))
 		}

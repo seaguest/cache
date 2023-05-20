@@ -52,7 +52,7 @@ func newMockCache(key string, delay, ci time.Duration) mockCache {
 			return redis.Dial("tcp", "127.0.0.1:6379")
 		},
 	}
-	mock.metricChan = make(chan metric, 20)
+	metricChan := make(chan metric, 20)
 	mock.ehCache = cache.New(
 		cache.GetConn(pool.Get),
 		cache.CleanInterval(ci),
@@ -62,13 +62,13 @@ func newMockCache(key string, delay, ci time.Duration) mockCache {
 				Type:        metricType,
 				ElapsedTime: elapsedTime,
 			}
-			mock.metricChan <- mc
-			log.Println("METRIC----", mc)
+			metricChan <- mc
 		}),
 		cache.OnError(func(err error) {
 			log.Printf("OnError:%+v", err)
 		}),
 	)
+	mock.metricChan = metricChan
 	mock.key = key
 	mock.val = &TestStruct{Name: "value for" + key}
 	mock.delay = delay
@@ -211,36 +211,37 @@ var _ = Describe("Cache", func() {
 					}
 				}
 			})
-			/*
-				It("loadFunc timeout", func() {
-					mock := newMockCache("load_func_panic_timeout#1", time.Millisecond*1200, time.Second)
-					mock.ehCache.DeleteFromRedis(mock.key)
-					mock.ehCache.DeleteFromMem(mock.key)
 
-					loadFunc := func() (interface{}, error) {
-						time.Sleep(mock.delay)
-						return mock.val, nil
+			It("loadFunc timeout", func() {
+				mock := newMockCache("load_func_panic_timeout#1", time.Millisecond*1200, time.Second)
+				mock.ehCache.DeleteFromRedis(mock.key)
+				mock.ehCache.DeleteFromMem(mock.key)
+
+				loadFunc := func() (interface{}, error) {
+					time.Sleep(mock.delay)
+					return mock.val, nil
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
+				defer cancel()
+
+				var v TestStruct
+				err := mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*3, loadFunc)
+				Ω(err).To(MatchError(context.DeadlineExceeded))
+
+				// must wait goroutine to exit successfully, otherwise the other test will receive the redis-pub notification
+				time.Sleep(time.Millisecond * 300)
+
+				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss}
+				for _, metricType := range metricList {
+					select {
+					case mc := <-mock.metricChan:
+						Ω(mc.Key).To(Equal(mock.key))
+						Ω(mc.Type).To(Equal(metricType))
+					default:
 					}
-
-					ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
-					defer cancel()
-
-					var v TestStruct
-					err := mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*3, loadFunc)
-					Ω(err).To(MatchError(context.DeadlineExceeded))
-
-					metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss}
-					for _, metricType := range metricList {
-						select {
-						case mc := <-mock.metricChan:
-							Ω(mc.Key).To(Equal(mock.key))
-							Ω(mc.Type).To(Equal(metricType))
-						default:
-						}
-					}
-					close(mock.metricChan)
-				})
-			*/
+				}
+			})
 		})
 
 		Context("Test redis hit", func() {
@@ -274,71 +275,12 @@ var _ = Describe("Cache", func() {
 
 				// make sure redis pub finished, mem get updated
 				time.Sleep(time.Millisecond * 10)
+				time.Sleep(time.Millisecond * 200)
 
 				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
 					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
 					cache.MetricTypeGetRedis, cache.MetricTypeSetMem, cache.MetricTypeGetCache,
 				}
-				for idx, metricType := range metricList {
-					select {
-					case mc := <-mock.metricChan:
-						log.Println("xxxxxxxxxxxxxxxxxx", mc, mock.key)
-						Ω(mc.Key).To(Equal(mock.key))
-						Ω(mc.Type).To(Equal(metricType))
-						if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad {
-							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
-						}
-
-						if mc.Type == cache.MetricTypeGetCache {
-							// the first get_cache should be same as delay
-							if idx == 6 {
-								Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
-							} else {
-								Ω(math.Abs(float64(mc.ElapsedTime)) < float64(time.Millisecond*10)).To(Equal(true))
-							}
-						}
-					default:
-					}
-				}
-				close(mock.metricChan)
-
-			})
-
-			It("redis hit expired", func() {
-				mock := newMockCache("redis_hit_expired#1", time.Millisecond*1200, time.Second)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
-
-				loadFunc := func() (interface{}, error) {
-					time.Sleep(mock.delay)
-					return mock.val, nil
-				}
-
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-				defer cancel()
-
-				var v TestStruct
-				err := mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*1, loadFunc)
-				Ω(err).ToNot(HaveOccurred())
-				Ω(&v).To(Equal(mock.val))
-
-				// wait redis expired
-				time.Sleep(time.Millisecond * 1010)
-				mock.ehCache.DeleteFromMem(mock.key)
-
-				ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
-				defer cancel()
-				err = mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*1, loadFunc)
-				Ω(err).ToNot(HaveOccurred())
-				Ω(&v).To(Equal(mock.val))
-
-				// make sure redis pub finished, mem get updated
-				time.Sleep(mock.delay + time.Millisecond*10)
-
-				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
-					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
-					cache.MetricTypeGetRedisExpired, cache.MetricTypeGetCache, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeAsyncLoad, cache.MetricTypeSetMem,
-				}
 
 				for idx, metricType := range metricList {
 					select {
@@ -361,6 +303,64 @@ var _ = Describe("Cache", func() {
 					}
 				}
 			})
+		})
+
+		It("redis hit expired", func() {
+			mock := newMockCache("redis_hit_expired#1", time.Millisecond*1200, time.Second)
+			mock.ehCache.DeleteFromRedis(mock.key)
+			mock.ehCache.DeleteFromMem(mock.key)
+
+			loadFunc := func() (interface{}, error) {
+				time.Sleep(mock.delay)
+				return mock.val, nil
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+			defer cancel()
+
+			var v TestStruct
+			err := mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*1, loadFunc)
+			Ω(err).ToNot(HaveOccurred())
+			Ω(&v).To(Equal(mock.val))
+
+			// wait redis expired
+			time.Sleep(time.Millisecond * 1010)
+			mock.ehCache.DeleteFromMem(mock.key)
+
+			ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
+			defer cancel()
+			err = mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*1, loadFunc)
+			Ω(err).ToNot(HaveOccurred())
+			Ω(&v).To(Equal(mock.val))
+
+			// make sure redis pub finished, mem get updated
+			time.Sleep(mock.delay + time.Millisecond*10)
+
+			metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
+				cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
+				cache.MetricTypeGetRedisExpired, cache.MetricTypeGetCache, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeAsyncLoad, cache.MetricTypeSetMem,
+			}
+
+			for idx, metricType := range metricList {
+				select {
+				case mc := <-mock.metricChan:
+					Ω(mc.Key).To(Equal(mock.key))
+					Ω(mc.Type).To(Equal(metricType))
+					if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad {
+						Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
+					}
+
+					if mc.Type == cache.MetricTypeGetCache {
+						// the first get_cache should be same as delay
+						if idx == 6 {
+							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
+						} else {
+							Ω(math.Abs(float64(mc.ElapsedTime)) < float64(time.Millisecond*10)).To(Equal(true))
+						}
+					}
+				default:
+				}
+			}
 		})
 
 		Context("Test mem hit", func() {
@@ -415,8 +415,6 @@ var _ = Describe("Cache", func() {
 					default:
 					}
 				}
-				close(mock.metricChan)
-
 			})
 
 			It("mem hit expired", func() {
@@ -477,5 +475,54 @@ var _ = Describe("Cache", func() {
 			})
 		})
 
+		Context("Test delete", func() {
+			It("delete ok", func() {
+				mock := newMockCache("delete_ok#1", time.Millisecond*1200, time.Second*1)
+				mock.ehCache.DeleteFromRedis(mock.key)
+				mock.ehCache.DeleteFromMem(mock.key)
+				mock.ehCache.Delete(mock.key)
+
+				// wait redis-pub received
+				time.Sleep(time.Millisecond * 10)
+
+				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem}
+
+				for _, metricType := range metricList {
+					select {
+					case mc := <-mock.metricChan:
+						Ω(mc.Key).To(Equal(mock.key))
+						Ω(mc.Type).To(Equal(metricType))
+					default:
+					}
+				}
+			})
+		})
+
+		Context("Test setobject", func() {
+			It("setobject ok", func() {
+				mock := newMockCache("set_object_ok#1", time.Millisecond*1200, time.Second*1)
+				mock.ehCache.DeleteFromRedis(mock.key)
+				mock.ehCache.DeleteFromMem(mock.key)
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
+				err := mock.ehCache.SetObject(ctx, mock.key, mock.val, time.Second)
+				Ω(err).ToNot(HaveOccurred())
+
+				// wait redis-pub received
+				time.Sleep(time.Millisecond * 10)
+
+				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeSetRedis, cache.MetricTypeSetCache, cache.MetricTypeSetMem}
+
+				for _, metricType := range metricList {
+					select {
+					case mc := <-mock.metricChan:
+						Ω(mc.Key).To(Equal(mock.key))
+						Ω(mc.Type).To(Equal(metricType))
+					default:
+					}
+				}
+			})
+		})
 	})
 })
