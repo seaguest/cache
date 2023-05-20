@@ -6,18 +6,19 @@ import (
 )
 
 const (
-	MetricTypeGetMem          = "get_mem"
+	MetricTypeGetMemHit       = "get_mem_hit"
 	MetricTypeGetMemMiss      = "get_mem_miss"
 	MetricTypeGetMemExpired   = "get_mem_expired"
-	MetricTypeGetRedis        = "get_redis"
+	MetricTypeGetRedisHit     = "get_redis_hit"
 	MetricTypeGetRedisMiss    = "get_redis_miss"
 	MetricTypeGetRedisExpired = "get_redis_expired"
-	MetricTypeGetCache        = "get_cache"
+	MetricTypeGetCacheHit     = "get_cache_hit"
 	MetricTypeLoad            = "load"
 	MetricTypeAsyncLoad       = "async_load"
 	MetricTypeSetCache        = "set_cache"
 	MetricTypeSetMem          = "set_mem"
 	MetricTypeSetRedis        = "set_redis"
+	MetricTypeDeleteCache     = "del_cache"
 	MetricTypeDeleteMem       = "del_mem"
 	MetricTypeDeleteRedis     = "del_redis"
 )

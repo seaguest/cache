@@ -41,7 +41,7 @@ func (c *memCache) get(key string) *Item {
 
 	it := tmp.(*Item)
 	if !it.Expired() {
-		metricType = MetricTypeGetMem
+		metricType = MetricTypeGetMemHit
 	} else {
 		metricType = MetricTypeGetMemExpired
 	}

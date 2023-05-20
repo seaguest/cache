@@ -172,7 +172,7 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 
 	var expired bool
 	namespacedKey := c.namespacedKey(key)
-	defer c.metric.Observe()(namespacedKey, MetricTypeGetCache, &err)
+	defer c.metric.Observe()(namespacedKey, MetricTypeGetCacheHit, &err)
 
 	var it *Item
 	defer func() {
@@ -285,19 +285,21 @@ func (c *cache) DeleteFromRedis(key string) error {
 }
 
 // Delete notify all cache instances to delete cache key
-func (c *cache) Delete(key string) error {
+func (c *cache) Delete(key string) (err error) {
 	namespacedKey := c.namespacedKey(key)
+	defer c.metric.Observe()(namespacedKey, MetricTypeDeleteCache, &err)
 
 	// delete redis, then pub to delete cache
-	if err := c.rds.delete(namespacedKey); err != nil {
-		return errors.WithStack(err)
+	if err = c.rds.delete(namespacedKey); err != nil {
+		err = errors.WithStack(err)
+		return
 	}
 
 	c.notifyAll(&actionRequest{
 		Action: cacheDelete,
 		Key:    namespacedKey,
 	})
-	return nil
+	return
 }
 
 // checkType register type if not exists.

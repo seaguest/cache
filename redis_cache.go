@@ -52,7 +52,7 @@ func (c *redisCache) get(key string, obj interface{}) (it *Item, err error) {
 	}
 
 	if !it.Expired() {
-		metricType = MetricTypeGetRedis
+		metricType = MetricTypeGetRedisHit
 	} else {
 		metricType = MetricTypeGetRedisExpired
 	}

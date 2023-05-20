@@ -7,10 +7,8 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/gomodule/redigo/redis"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/seaguest/cache"
 )
 
 type ComplexStruct1 struct {
@@ -76,27 +74,11 @@ func getRandomString() string {
 var _ = Describe("Cache", func() {
 	Context("Cache", func() {
 		var (
-			pool    *redis.Pool
-			ehCache cache.Cache
-			cs1     ComplexStruct1
-			cs2     ComplexStruct2
+			cs1 ComplexStruct1
+			cs2 ComplexStruct2
 		)
 
 		BeforeEach(func() {
-			pool = &redis.Pool{
-				MaxIdle:     2,
-				MaxActive:   5,
-				Wait:        true,
-				IdleTimeout: 300 * time.Second,
-				TestOnBorrow: func(c redis.Conn, t time.Time) error {
-					_, err := c.Do("PING")
-					return err
-				},
-				Dial: func() (redis.Conn, error) {
-					return redis.Dial("tcp", "127.0.0.1:6379")
-				},
-			}
-
 			cs1 = ComplexStruct1{
 				StrField:   getRandomString(),
 				IntField:   rand.Intn(100),
@@ -131,19 +113,10 @@ var _ = Describe("Cache", func() {
 		})
 
 		Context("stress test", func() {
-			BeforeEach(func() {
-				ehCache = cache.New(
-					cache.GetConn(pool.Get),
-					cache.CleanInterval(time.Second),
-					cache.OnError(func(err error) {
-						log.Printf("OnError:%+v", err)
-					}),
-				)
-			})
-
 			bgCtx := context.Background()
-
 			It("stress test", func() {
+				mock := newMockCache("stress_test#1", time.Millisecond*1200, time.Second, false)
+
 				for j := 0; j < 100; j++ {
 					go func(id int) {
 						for {
@@ -152,7 +125,7 @@ var _ = Describe("Cache", func() {
 							cs.ID = id
 
 							var v ComplexStruct1
-							err := ehCache.GetObject(ctx, fmt.Sprintf("complex_struct_1#%d", id), &v, time.Second*3, func() (interface{}, error) {
+							err := mock.ehCache.GetObject(ctx, fmt.Sprintf("complex_struct_1#%d", id), &v, time.Second*3, func() (interface{}, error) {
 								time.Sleep(time.Millisecond * 10)
 								cs := cs1
 								cs.ID = id
@@ -176,7 +149,7 @@ var _ = Describe("Cache", func() {
 							cs.ID = id
 
 							var v ComplexStruct2
-							err := ehCache.GetObject(ctx, fmt.Sprintf("complex_struct_2#%d", id), &v, time.Second*3, func() (interface{}, error) {
+							err := mock.ehCache.GetObject(ctx, fmt.Sprintf("complex_struct_2#%d", id), &v, time.Second*3, func() (interface{}, error) {
 								time.Sleep(time.Millisecond * 10)
 								cs := cs2
 								cs.ID = id
