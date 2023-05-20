@@ -23,7 +23,7 @@ type Options struct {
 
 	// exposed for metrics purpose
 	// key can be composed of type#id, can easily extract type from key
-	OnMetric func(key string, metricType string, elapsedTime time.Duration)
+	Metric Metrics
 
 	// must be provided for cache initialization, handle internal error
 	OnError func(err error)
@@ -63,7 +63,9 @@ func GetConn(getConn func() redis.Conn) Option {
 
 func OnMetric(onMetric func(key string, metricType string, elapsedTime time.Duration)) Option {
 	return func(o *Options) {
-		o.OnMetric = onMetric
+		o.Metric = Metrics{
+			onMetric: onMetric,
+		}
 	}
 }
 

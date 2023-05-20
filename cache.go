@@ -3,8 +3,8 @@ package cache
 import (
 	"context"
 	"fmt"
+	"log"
 	"reflect"
-	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +53,12 @@ type cache struct {
 	mem *memCache
 
 	sfg singleflight.Group
+
+	metric Metrics
+
+	// this chan will listen the request of asynchronous load
+	// goroutine in getObject is not guaranteed to be executed.
+	syncChan chan func()
 }
 
 func New(options ...Option) Cache {
@@ -80,10 +86,14 @@ func New(options ...Option) Cache {
 		panic("need OnError for cache initialization")
 	}
 
+	c.syncChan = make(chan func(), 1000)
 	c.options = opts
-	c.mem = newMemCache(opts.CleanInterval)
-	c.rds = newRedisCache(opts.GetConn, opts.RedisTTLFactor)
+	c.metric = opts.Metric
+	c.metric.namespace = opts.Namespace
+	c.mem = newMemCache(opts.CleanInterval, c.metric)
+	c.rds = newRedisCache(opts.GetConn, opts.RedisTTLFactor, c.metric)
 	go c.watch()
+	go c.load()
 	return c
 }
 
@@ -107,7 +117,7 @@ func (c *cache) SetObject(ctx context.Context, key string, obj interface{}, ttl 
 	return err
 }
 
-func (c *cache) setObject(key string, obj interface{}, ttl time.Duration) error {
+func (c *cache) setObject(key string, obj interface{}, ttl time.Duration) (err error) {
 	if ttl > ttl.Truncate(time.Second) {
 		return errors.WithStack(ErrIllegalTTL)
 	}
@@ -116,7 +126,10 @@ func (c *cache) setObject(key string, obj interface{}, ttl time.Duration) error 
 	c.checkType(typeName, obj, ttl)
 
 	namespacedKey := c.namespacedKey(key)
-	_, err, _ := c.sfg.Do(namespacedKey+"_set", func() (interface{}, error) {
+	// redis hits
+	defer c.metric.Observe()(namespacedKey, MetricTypeSetCache, &err)
+
+	_, err, _ = c.sfg.Do(namespacedKey+"_set", func() (interface{}, error) {
 		_, err := c.rds.set(namespacedKey, obj, ttl)
 		if err != nil {
 			return nil, errors.WithStack(err)
@@ -162,26 +175,27 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 		return errors.WithStack(ErrIllegalTTL)
 	}
 
-	start := time.Now()
-	var metricType string
 	typeName := getTypeName(obj)
 	c.checkType(typeName, obj, ttl)
 
+	var expired bool
 	namespacedKey := c.namespacedKey(key)
+	// redis hits
+	defer c.metric.Observe()(namespacedKey, MetricTypeGetCache, &err)
+
 	var it *Item
 	defer func() {
-		if c.options.OnMetric != nil {
-			c.options.OnMetric(key, metricType, time.Since(start))
-		}
-
 		// deepcopy before return
 		if err == nil {
 			err = c.copy(it.Object, obj)
 		}
 
 		// if hit but expired, then do a fresh load
-		if metricType == MetricTypeMemHitExpired || metricType == MetricTypeRedisHitExpired {
+		if expired {
 			go func() {
+				// async load metric
+				defer c.metric.Observe()(namespacedKey, MetricTypeAsyncLoad, nil)
+
 				_, resetErr := c.resetObject(namespacedKey, ttl, f)
 				if resetErr != nil {
 					c.options.OnError(errors.WithStack(resetErr))
@@ -194,10 +208,8 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 	// try to retrieve from local cache, return if found
 	it = c.mem.get(namespacedKey)
 	if it != nil {
-		if !it.Expired() {
-			metricType = MetricTypeMemHit
-		} else {
-			metricType = MetricTypeMemHitExpired
+		if it.Expired() {
+			expired = true
 		}
 		return
 	}
@@ -210,17 +222,16 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 			return nil, errors.WithStack(redisErr)
 		}
 		if v != nil {
-			if !v.Expired() {
-				metricType = MetricTypeRedisHit
-				// update memory cache since it is not previously found in mem
-				c.mem.set(namespacedKey, v)
+			if v.Expired() {
+				expired = true
 			} else {
-				metricType = MetricTypeRedisHitExpired
+				// update memory cache since it is not previously found in mem
+				log.Println("set mem from non-expired redis............", namespacedKey)
+				c.mem.set(namespacedKey, v)
 			}
 			return v, nil
 		}
-
-		metricType = MetricTypeMiss
+		log.Println("going to load............")
 		return c.resetObject(namespacedKey, ttl, f)
 	})
 	if err != nil {
@@ -233,14 +244,10 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 // resetObject load fresh data to redis and in-memory with loader function
 func (c *cache) resetObject(namespacedKey string, ttl time.Duration, f func() (interface{}, error)) (*Item, error) {
 	itf, err, _ := c.sfg.Do(namespacedKey+"_reset", func() (it interface{}, err error) {
-		start := time.Now()
-		defer func() {
-			// add metric for a fresh load
-			if c.options.OnMetric != nil {
-				key := strings.TrimPrefix(namespacedKey, c.options.Namespace+":")
-				c.options.OnMetric(key, MetricTypeLoad, time.Since(start))
-			}
+		// add metric for a fresh load
+		defer c.metric.Observe()(namespacedKey, MetricTypeLoad, &err)
 
+		defer func() {
 			if r := recover(); r != nil {
 				switch v := r.(type) {
 				case error:
@@ -380,6 +387,13 @@ func (c *cache) actionChannel() string {
 	return c.options.Namespace + ":action_channel"
 }
 
+func (c *cache) load() {
+	select {
+	case f := <-c.syncChan:
+		f()
+	}
+}
+
 // watch the cache update
 func (c *cache) watch() {
 	conn := c.options.GetConn()
@@ -400,6 +414,8 @@ func (c *cache) watch() {
 				continue
 			}
 
+			log.Println("redis pub............", ar)
+
 			switch ar.Action {
 			case cacheSet:
 				objType, ok := c.types.Load(ar.TypeName)
@@ -414,6 +430,8 @@ func (c *cache) watch() {
 				}
 
 				it := newItem(obj, objType.(*objectType).ttl)
+				log.Println("set mem from redis pub............", ar.Key)
+
 				c.mem.set(ar.Key, it)
 			case cacheDelete:
 				c.mem.delete(ar.Key)

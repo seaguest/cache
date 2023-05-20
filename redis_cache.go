@@ -10,40 +10,60 @@ import (
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 type redisCache struct {
+	// func to get redis conn from pool
 	getConn func() redis.Conn
 
+	// TTL in redis will be redisTTLFactor*mem_ttl
 	redisTTLFactor int
+
+	// metric for redis cache
+	metric Metrics
 }
 
-func newRedisCache(getConn func() redis.Conn, redisTTLFactor int) *redisCache {
+func newRedisCache(getConn func() redis.Conn, redisTTLFactor int, metric Metrics) *redisCache {
 	return &redisCache{
 		getConn:        getConn,
 		redisTTLFactor: redisTTLFactor,
+		metric:         metric,
 	}
 }
 
 // read item from redis
-func (c *redisCache) get(key string, obj interface{}) (*Item, error) {
+func (c *redisCache) get(key string, obj interface{}) (it *Item, err error) {
+	var metricType string
+	defer c.metric.Observe()(key, &metricType, &err)
+
 	body, err := c.getString(key)
 	if err != nil {
 		if err == redis.ErrNil {
-			return nil, nil
+			metricType = MetricTypeGetRedisMiss
+			err = nil
+			return
 		} else {
-			return nil, err
+			return
 		}
 	}
 
-	var it Item
+	it = &Item{}
 	it.Object = obj
-	err = json.Unmarshal([]byte(body), &it)
+	err = json.Unmarshal([]byte(body), it)
 	if err != nil {
-		return nil, err
+		return
 	}
-	return &it, nil
+
+	if !it.Expired() {
+		metricType = MetricTypeGetRedis
+	} else {
+		metricType = MetricTypeGetRedisExpired
+	}
+	return
 }
 
-func (c *redisCache) set(key string, obj interface{}, ttl time.Duration) (*Item, error) {
-	it := newItem(obj, ttl)
+func (c *redisCache) set(key string, obj interface{}, ttl time.Duration) (it *Item, err error) {
+	// redis set
+	defer c.metric.Observe()(key, MetricTypeSetRedis, &err)
+
+	it = newItem(obj, ttl)
 	redisTTL := 0
 	if ttl > 0 {
 		redisTTL = int(ttl/time.Second) * c.redisTTLFactor
@@ -51,17 +71,20 @@ func (c *redisCache) set(key string, obj interface{}, ttl time.Duration) (*Item,
 
 	bs, err := json.Marshal(it)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	err = c.setString(key, string(bs), redisTTL)
 	if err != nil {
-		return nil, err
+		return
 	}
-	return it, nil
+	return
 }
 
 func (c *redisCache) delete(key string) (err error) {
+	// redis del
+	defer c.metric.Observe()(key, MetricTypeDeleteRedis, &err)
+
 	conn := c.getConn()
 	defer conn.Close()
 

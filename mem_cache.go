@@ -6,15 +6,22 @@ import (
 )
 
 type memCache struct {
+	// local cache
 	items sync.Map
-	ci    time.Duration
+
+	// clean interval
+	ci time.Duration
+
+	// metric for mem cache
+	metric Metrics
 }
 
 // newMemCache memcache will scan all objects for every clean interval and delete expired key.
-func newMemCache(ci time.Duration) *memCache {
+func newMemCache(ci time.Duration, metric Metrics) *memCache {
 	c := &memCache{
-		items: sync.Map{},
-		ci:    ci,
+		items:  sync.Map{},
+		ci:     ci,
+		metric: metric,
 	}
 
 	go c.runJanitor()
@@ -23,20 +30,36 @@ func newMemCache(ci time.Duration) *memCache {
 
 // get an item from the memcache. Returns the item or nil, and a bool indicating whether the key was found.
 func (c *memCache) get(key string) *Item {
+	var metricType string
+	defer c.metric.Observe()(key, &metricType, nil)
+
 	tmp, ok := c.items.Load(key)
 	if !ok {
+		metricType = MetricTypeGetMemMiss
 		return nil
 	}
 
-	return tmp.(*Item)
+	it := tmp.(*Item)
+	if !it.Expired() {
+		metricType = MetricTypeGetMem
+	} else {
+		metricType = MetricTypeGetMemExpired
+	}
+	return it
 }
 
 func (c *memCache) set(key string, it *Item) {
+	// mem set
+	defer c.metric.Observe()(key, MetricTypeSetMem, nil)
+
 	c.items.Store(key, it)
 }
 
 // Delete an item from the memcache. Does nothing if the key is not in the memcache.
 func (c *memCache) delete(key string) {
+	// mem del
+	defer c.metric.Observe()(key, MetricTypeDeleteMem, nil)
+
 	c.items.Delete(key)
 }
 
@@ -59,7 +82,7 @@ func (c *memCache) DeleteExpired() {
 		v := value.(*Item)
 		k := key.(string)
 		// delete outdated for memory cache
-		if v.ExpireAt != 0 && v.ExpireAt < time.Now().Unix() {
+		if v.Expired() {
 			c.items.Delete(k)
 		}
 		return true
