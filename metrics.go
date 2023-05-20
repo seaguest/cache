@@ -33,23 +33,25 @@ type Metrics struct {
 func (m Metrics) Observe() func(string, interface{}, *error) {
 	start := time.Now()
 	return func(namespacedKey string, metricType interface{}, err *error) {
-		if m.onMetric != nil {
-			var metric string
-			switch v := metricType.(type) {
-			case *string:
-				metric = *v
-			case string:
-				metric = v
-			default:
-				return
-			}
-
-			// ignore metric for error case
-			if err != nil && *err != nil {
-				return
-			}
-			key := strings.TrimPrefix(namespacedKey, m.namespace+":")
-			m.onMetric(key, metric, time.Since(start))
+		if m.onMetric == nil {
+			return
 		}
+
+		var metric string
+		switch v := metricType.(type) {
+		case *string:
+			metric = *v
+		case string:
+			metric = v
+		default:
+			return
+		}
+
+		// ignore metric for error case
+		if err != nil && *err != nil {
+			return
+		}
+		key := strings.TrimPrefix(namespacedKey, m.namespace+":")
+		m.onMetric(key, metric, time.Since(start))
 	}
 }
