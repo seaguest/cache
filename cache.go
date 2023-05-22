@@ -419,6 +419,7 @@ func (c *cache) watch() {
 			}
 		case error:
 			c.options.OnError(errors.WithStack(v))
+			time.Sleep(time.Second) // Wait for a second before attempting to receive messages again
 		}
 	}
 }
