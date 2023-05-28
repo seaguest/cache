@@ -40,8 +40,8 @@ type mockCache struct {
 func newMockCache(key string, delay, ci time.Duration, checkMetric bool) mockCache {
 	mock := mockCache{}
 	pool := &redis.Pool{
-		MaxIdle:     1000,
-		MaxActive:   1000,
+		MaxIdle:     2,
+		MaxActive:   5,
 		Wait:        true,
 		IdleTimeout: 240 * time.Second,
 		TestOnBorrow: func(c redis.Conn, t time.Time) error {

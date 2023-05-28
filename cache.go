@@ -403,13 +403,13 @@ func (c *cache) watch() {
 			case cacheSet:
 				objType, ok := c.types.Load(ar.TypeName)
 				if !ok {
-					return
+					continue
 				}
 
 				obj := deepcopy.Copy(objType.(*objectType).typ)
 				if err := json.Unmarshal(ar.Payload, obj); err != nil {
 					c.options.OnError(errors.WithStack(err))
-					return
+					continue
 				}
 
 				it := newItem(obj, objType.(*objectType).ttl)
