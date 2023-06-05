@@ -56,6 +56,7 @@ func (c *redisCache) get(key string, obj interface{}) (it *Item, err error) {
 	} else {
 		metricType = MetricTypeGetRedisExpired
 	}
+	it.Size = len(body)
 	return
 }
 

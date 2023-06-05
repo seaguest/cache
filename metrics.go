@@ -21,15 +21,20 @@ const (
 	MetricTypeDeleteCache     = "del_cache"
 	MetricTypeDeleteMem       = "del_mem"
 	MetricTypeDeleteRedis     = "del_redis"
+	MetricTypeCount           = "count"
+	MetricTypeMemUsage        = "mem_usage"
 )
 
 type Metrics struct {
 	// keys are namespacedKey, need trim namespace
 	namespace string
 
-	onMetric func(key string, metricType string, elapsedTime time.Duration)
+	separator string
+
+	onMetric func(key, objectType string, metricType string, count int, elapsedTime time.Duration)
 }
 
+// Observe used for histogram metrics
 func (m Metrics) Observe() func(string, interface{}, *error) {
 	start := time.Now()
 	return func(namespacedKey string, metricType interface{}, err *error) {
@@ -51,6 +56,12 @@ func (m Metrics) Observe() func(string, interface{}, *error) {
 			return
 		}
 		key := strings.TrimPrefix(namespacedKey, m.namespace+":")
-		m.onMetric(key, metric, time.Since(start))
+		objectType := strings.Split(key, m.separator)[0]
+		m.onMetric(key, objectType, metric, 0, time.Since(start))
 	}
+}
+
+// Observe used for gauge metrics, counts and memory usage metrics
+func (m Metrics) Set(objectType, metricType string, count int) {
+	m.onMetric("*", objectType, metricType, count, 0)
 }

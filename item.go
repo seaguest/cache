@@ -3,9 +3,9 @@ package cache
 import "time"
 
 type Item struct {
-	Object   interface{}   `json:"object"`    // object
-	TTL      time.Duration `json:"ttl"`       // key ttl, in second
-	ExpireAt int64         `json:"expire_at"` // data expiration timestamp. in milliseconds.
+	Object   interface{} `json:"object"`    // object
+	Size     int         `json:"size"`      // object size, in bytes.
+	ExpireAt int64       `json:"expire_at"` // data expiration timestamp. in milliseconds.
 }
 
 func newItem(v interface{}, ttl time.Duration) *Item {
@@ -16,7 +16,6 @@ func newItem(v interface{}, ttl time.Duration) *Item {
 
 	return &Item{
 		Object:   v,
-		TTL:      ttl,
 		ExpireAt: expiredAt,
 	}
 }

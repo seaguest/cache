@@ -25,7 +25,7 @@ type Cache interface {
 	SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
 
 	// GetObject loader function f() will be called in case cache all miss
-	// suggest to use object#id as key or any other pattern which can easily extract object, aggregate metric for same object in onMetric
+	// suggest to use object_type#id as key or any other pattern which can easily extract object, aggregate metric for same object in onMetric
 	GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error
 
 	Delete(key string) error
@@ -66,6 +66,11 @@ func New(options ...Option) Cache {
 		opts.Namespace = defaultNamespace
 	}
 
+	// set separator
+	if opts.Separator == "" {
+		panic("Separator unspecified")
+	}
+
 	// set default RedisTTLFactor to 4 if missing
 	if opts.RedisTTLFactor == 0 {
 		opts.RedisTTLFactor = 4
@@ -79,7 +84,7 @@ func New(options ...Option) Cache {
 	}
 
 	if opts.OnError == nil {
-		panic("need OnError for cache initialization")
+		panic("OnError is nil")
 	}
 
 	c.options = opts
@@ -413,6 +418,7 @@ func (c *cache) watch() {
 				}
 
 				it := newItem(obj, objType.(*objectType).ttl)
+				it.Size = len(ar.Payload)
 				c.mem.set(ar.Key, it)
 			case cacheDelete:
 				c.mem.delete(ar.Key)

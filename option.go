@@ -9,6 +9,10 @@ import (
 type Options struct {
 	Namespace string
 
+	// key should be in format object_type{Separator}id
+	// can be : or ; or #
+	Separator string
+
 	// clean interval for in-memory cache
 	CleanInterval time.Duration
 
@@ -36,6 +40,12 @@ func Namespace(namespace string) Option {
 	}
 }
 
+func Separator(separator string) Option {
+	return func(o *Options) {
+		o.Separator = separator
+	}
+}
+
 func CleanInterval(cleanInterval time.Duration) Option {
 	return func(o *Options) {
 		o.CleanInterval = cleanInterval
@@ -60,7 +70,7 @@ func GetConn(getConn func() redis.Conn) Option {
 	}
 }
 
-func OnMetric(onMetric func(key string, metricType string, elapsedTime time.Duration)) Option {
+func OnMetric(onMetric func(key, objectType string, metricType string, count int, elapsedTime time.Duration)) Option {
 	return func(o *Options) {
 		o.Metric = Metrics{
 			onMetric: onMetric,

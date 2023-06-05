@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -76,15 +77,39 @@ func (c *memCache) runJanitor() {
 	}
 }
 
+type memStat struct {
+	count    int
+	memUsage int
+}
+
 // DeleteExpired delete all expired items from the memcache.
 func (c *memCache) DeleteExpired() {
+	ms := make(map[string]*memStat)
 	c.items.Range(func(key, value interface{}) bool {
 		v := value.(*Item)
 		k := key.(string)
+
+		objectType := strings.Split(strings.TrimPrefix(k, c.metric.namespace+":"), c.metric.separator)[0]
+		stat, ok := ms[objectType]
+		if !ok {
+			stat = &memStat{
+				count:    1,
+				memUsage: v.Size,
+			}
+		} else {
+			stat.count += 1
+			stat.memUsage += v.Size
+		}
+
 		// delete outdated for memory cache
 		if v.Expired() {
 			c.items.Delete(k)
 		}
 		return true
 	})
+
+	for k, v := range ms {
+		c.metric.Set(k, MetricTypeCount, v.count)
+		c.metric.Set(k, MetricTypeMemUsage, v.memUsage)
+	}
 }

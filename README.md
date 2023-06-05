@@ -1,4 +1,5 @@
 # cache
+
 A lightweight and high-performance distributed caching, a cache-aside pattern implementation built on top of in-memory + Redis. The cache consists of one global Redis instance and multiple in-memory instances, with any data changes being synchronized across all instances.
 
 The library is designed to prioritize retrieving data from the in-memory cache first, followed by the Redis cache if the data is not found locally. If the data is still not found in either cache, the library will call a loader function to retrieve the data and store it in the cache for future access.
@@ -8,6 +9,7 @@ One of the key benefits of this library is its performance. By leveraging both i
 ![alt text](./assets/cache.png "cache-aside pattern")
 
 ## Features
+
 - **Two-level cache** : in-memory cache first, redis-backed
 - **Easy to use** : simple api with minimum configuration.
 - **Data consistency** : all in-memory instances will be notified by `Pub-Sub` if any value gets updated, redis and in-memory will keep consistent.
@@ -15,7 +17,9 @@ One of the key benefits of this library is its performance. By leveraging both i
 - **Metrics** : provide callback function to measure the cache metrics.
 
 ## Sequence diagram
+
 ### Reload from loader function
+
 ```mermaid
 sequenceDiagram
     participant APP as Application
@@ -24,7 +28,7 @@ sequenceDiagram
     participant L2 as Local Cache2
     participant S as Shared Cache
     participant R as LoadFunc(DB)
-    
+
     APP ->> M: Cache.GetObject()
     alt reload
         M ->> R: LoadFunc
@@ -37,6 +41,7 @@ sequenceDiagram
 ```
 
 ### Cache GetObject
+
 ```mermaid
 sequenceDiagram
     participant APP as Application
@@ -45,7 +50,7 @@ sequenceDiagram
     participant L2 as Local Cache2
     participant S as Shared Cache
     participant R as LoadFunc(DB)
-    
+
     APP ->> M: Cache.GetObject()
     alt Local Cache hit
         M ->> L: mem.Get()
@@ -71,6 +76,7 @@ sequenceDiagram
 ```
 
 ### Set
+
 ```mermaid
 sequenceDiagram
     participant APP as Application
@@ -78,7 +84,7 @@ sequenceDiagram
     participant L as Local Cache
     participant L2 as Local Cache2
     participant S as Shared Cache
-    
+
     APP ->> M: Cache.SetObject()
     alt Set
         M ->> S: redis.Set()
@@ -89,6 +95,7 @@ sequenceDiagram
 ```
 
 ### Delete
+
 ```mermaid
 sequenceDiagram
     participant APP as Application
@@ -96,7 +103,7 @@ sequenceDiagram
     participant L as Local Cache
     participant L2 as Local Cache2
     participant S as Shared Cache
-    
+
     APP ->> M: Cache.Delete()
     alt Delete
         M ->> S: redis.Delete()
@@ -111,22 +118,23 @@ sequenceDiagram
 `go get -u github.com/seaguest/cache`
 
 ### API
+
 ```go
 type Cache interface {
     SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
-    
+
     // GetObject loader function f() will be called in case cache all miss
-    // suggest to use object#id as key or any other pattern which can easily extract object, aggregate metric for same object in onMetric
+    // suggest to use object_type#id as key or any other pattern which can easily extract object, aggregate metric for same object in onMetric
     GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error
-    
+
     Delete(key string) error
-    
+
     // Disable GetObject will call loader function in case cache is disabled.
     Disable()
-    
+
     // DeleteFromMem allows to delete key from mem, for test purpose
     DeleteFromMem(key string)
-    
+
     // DeleteFromRedis allows to delete key from redis, for test purpose
     DeleteFromRedis(key string) error
 }
@@ -134,7 +142,7 @@ type Cache interface {
 
 ### Tips
 
-```github.com/seaguest/deepcopy```is adopted for deepcopy, returned value is deepcopied to avoid dirty data.
+`github.com/seaguest/deepcopy`is adopted for deepcopy, returned value is deepcopied to avoid dirty data.
 please implement DeepCopy interface if you encounter deepcopy performance trouble.
 
 ```go
@@ -146,7 +154,7 @@ func (p *TestStruct) DeepCopy() interface{} {
 
 ### Usage
 
-``` go
+```go
 package main
 
 import (

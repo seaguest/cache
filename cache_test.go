@@ -56,7 +56,12 @@ func newMockCache(key string, delay, ci time.Duration, checkMetric bool) mockCac
 	mock.ehCache = cache.New(
 		cache.GetConn(pool.Get),
 		cache.CleanInterval(ci),
-		cache.OnMetric(func(key string, metricType string, elapsedTime time.Duration) {
+		cache.Separator("#"),
+		cache.OnMetric(func(key, objectType string, metricType string, count int, elapsedTime time.Duration) {
+			if metricType == cache.MetricTypeCount || metricType == cache.MetricTypeMemUsage {
+				return
+			}
+
 			if !checkMetric {
 				return
 			}
