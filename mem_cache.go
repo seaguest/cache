@@ -100,6 +100,7 @@ func (c *memCache) DeleteExpired() {
 			stat.count += 1
 			stat.memUsage += v.Size
 		}
+		ms[objectType] = stat
 
 		// delete outdated for memory cache
 		if v.Expired() {
