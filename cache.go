@@ -399,7 +399,7 @@ func (c *cache) watch() {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
 			var ar actionRequest
-			if err := json.Unmarshal(v.Data, &ar); err != nil {
+			if err := unmarshal(v.Data, &ar); err != nil {
 				c.options.OnError(errors.WithStack(err))
 				continue
 			}
@@ -412,7 +412,7 @@ func (c *cache) watch() {
 				}
 
 				obj := deepcopy.Copy(objType.(*objectType).typ)
-				if err := json.Unmarshal(ar.Payload, obj); err != nil {
+				if err := unmarshal(ar.Payload, obj); err != nil {
 					c.options.OnError(errors.WithStack(err))
 					continue
 				}
@@ -432,14 +432,14 @@ func (c *cache) watch() {
 
 // notifyAll will broadcast the cache change to all cache instances
 func (c *cache) notifyAll(ar *actionRequest) {
-	bs, err := json.Marshal(ar.Object)
+	bs, err := marshal(ar.Object)
 	if err != nil {
 		c.options.OnError(errors.WithStack(err))
 		return
 	}
 	ar.Payload = bs
 
-	msgBody, err := json.Marshal(ar)
+	msgBody, err := marshal(ar)
 	if err != nil {
 		c.options.OnError(errors.WithStack(err))
 		return

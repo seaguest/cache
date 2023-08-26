@@ -4,10 +4,7 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
-	jsoniter "github.com/json-iterator/go"
 )
-
-var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 type redisCache struct {
 	// func to get redis conn from pool
@@ -46,7 +43,7 @@ func (c *redisCache) get(key string, obj interface{}) (it *Item, err error) {
 
 	it = &Item{}
 	it.Object = obj
-	err = json.Unmarshal([]byte(body), it)
+	err = unmarshal([]byte(body), it)
 	if err != nil {
 		return
 	}
@@ -70,7 +67,7 @@ func (c *redisCache) set(key string, obj interface{}, ttl time.Duration) (it *It
 		redisTTL = int(ttl/time.Second) * c.redisTTLFactor
 	}
 
-	bs, err := json.Marshal(it)
+	bs, err := marshal(it)
 	if err != nil {
 		return
 	}
