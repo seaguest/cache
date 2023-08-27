@@ -61,7 +61,7 @@ func (m Metrics) Observe() func(string, interface{}, *error) {
 	}
 }
 
-// Observe used for gauge metrics, counts and memory usage metrics
-func (m Metrics) Set(objectType, metricType string, count int) {
-	m.onMetric("*", objectType, metricType, count, 0)
+// Set used for gauge metrics, counts and memory usage metrics
+func (m Metrics) Set(objectType, metric string, count int) {
+	m.onMetric("*", objectType, metric, count, 0)
 }
