@@ -90,6 +90,7 @@ func New(options ...Option) Cache {
 	c.options = opts
 	c.metric = opts.Metric
 	c.metric.namespace = opts.Namespace
+	c.metric.separator = opts.Separator
 	c.mem = newMemCache(opts.CleanInterval, c.metric)
 	c.rds = newRedisCache(opts.GetConn, opts.RedisTTLFactor, c.metric)
 	go c.watch()
