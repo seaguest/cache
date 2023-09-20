@@ -6,6 +6,20 @@ import (
 	"github.com/gomodule/redigo/redis"
 )
 
+type GetCachePolicy int
+
+const (
+	GetPolicyReturnExpired GetCachePolicy = iota + 1
+	GetPolicyReloadOnExpiry
+)
+
+type UpdateCachePolicy int
+
+const (
+	UpdatePolicyBroadcast UpdateCachePolicy = iota + 1
+	UpdatePolicyNoBroadcast
+)
+
 type Options struct {
 	Namespace string
 
@@ -15,6 +29,12 @@ type Options struct {
 
 	// clean interval for in-memory cache
 	CleanInterval time.Duration
+
+	// get policy when data is expired, ReturnExpired or ReloadOnExpiry
+	GetPolicy GetCachePolicy
+
+	// update policy when data is updated, Broadcast or NoBroadcast
+	UpdatePolicy UpdateCachePolicy
 
 	// will call loader function when disabled id true
 	Disabled bool
@@ -81,6 +101,18 @@ func OnMetric(onMetric func(key, objectType string, metricType string, count int
 func OnError(onError func(err error)) Option {
 	return func(o *Options) {
 		o.OnError = onError
+	}
+}
+
+func GetPolicy(getPolicy GetCachePolicy) Option {
+	return func(o *Options) {
+		o.GetPolicy = getPolicy
+	}
+}
+
+func UpdatePolicy(updatePolicy UpdateCachePolicy) Option {
+	return func(o *Options) {
+		o.UpdatePolicy = updatePolicy
 	}
 }
 

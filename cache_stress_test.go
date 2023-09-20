@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/seaguest/cache"
 )
 
 type ComplexStruct1 struct {
@@ -115,7 +116,7 @@ var _ = Describe("cache stress", func() {
 		Context("stress test", func() {
 			bgCtx := context.Background()
 			It("stress test", func() {
-				mock := newMockCache("stress_test#1", time.Millisecond*1200, time.Second, false)
+				mock := newMockCache("stress_test#1", time.Millisecond*1200, time.Second, false, cache.GetPolicyReloadOnExpiry, cache.UpdatePolicyNoBroadcast)
 
 				for j := 0; j < 100; j++ {
 					go func(id int) {

@@ -22,11 +22,11 @@ const (
 )
 
 type Cache interface {
-	SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
+	SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, opts ...Option) error
 
 	// GetObject loader function f() will be called in case cache all miss
 	// suggest to use object_type#id as key or any other pattern which can easily extract object, aggregate metric for same object in onMetric
-	GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error
+	GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error), opts ...Option) error
 
 	Delete(key string) error
 
@@ -76,6 +76,15 @@ func New(options ...Option) Cache {
 		opts.RedisTTLFactor = 4
 	}
 
+	// if get policy is not specified, use returnExpired policy, return data even if data is expired.
+	if opts.GetPolicy == 0 {
+		opts.GetPolicy = GetPolicyReturnExpired
+	}
+	// if update policy is not specified, use NoBroadcast policy, don't broadcast to other nodes when cache is updated.
+	if opts.UpdatePolicy == 0 {
+		opts.UpdatePolicy = UpdatePolicyNoBroadcast
+	}
+
 	// set default CleanInterval to 10s if missing
 	if opts.CleanInterval == 0 {
 		opts.CleanInterval = time.Second * 10
@@ -102,11 +111,12 @@ func (c *cache) Disable() {
 	c.options.Disabled = true
 }
 
-func (c *cache) SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error {
+func (c *cache) SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, opts ...Option) error {
+	opt := newOptions(opts...)
 	done := make(chan error)
 	var err error
 	go func() {
-		done <- c.setObject(key, obj, ttl)
+		done <- c.setObject(key, obj, ttl, opt)
 	}()
 
 	select {
@@ -117,9 +127,15 @@ func (c *cache) SetObject(ctx context.Context, key string, obj interface{}, ttl 
 	return err
 }
 
-func (c *cache) setObject(key string, obj interface{}, ttl time.Duration) (err error) {
+func (c *cache) setObject(key string, obj interface{}, ttl time.Duration, opt Options) (err error) {
 	if ttl > ttl.Truncate(time.Second) {
 		return errors.WithStack(ErrIllegalTTL)
+	}
+
+	// use UpdateCachePolicy from inout if provided, otherwise take from global options.
+	updatePolicy := opt.UpdatePolicy
+	if updatePolicy == 0 {
+		updatePolicy = c.options.UpdatePolicy
 	}
 
 	typeName := getTypeName(obj)
@@ -129,23 +145,29 @@ func (c *cache) setObject(key string, obj interface{}, ttl time.Duration) (err e
 	defer c.metric.Observe()(namespacedKey, MetricTypeSetCache, &err)
 
 	_, err, _ = c.sfg.Do(namespacedKey+"_set", func() (interface{}, error) {
+		// update local mem first
+		c.mem.set(namespacedKey, newItem(obj, ttl))
+
 		_, err := c.rds.set(namespacedKey, obj, ttl)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
 
 		c.notifyAll(&actionRequest{
-			Action:   cacheSet,
-			TypeName: typeName,
-			Key:      namespacedKey,
-			Object:   obj,
+			Action:       cacheSet,
+			TypeName:     typeName,
+			Key:          namespacedKey,
+			Object:       obj,
+			UpdatePolicy: updatePolicy,
 		})
 		return nil, nil
 	})
 	return err
 }
 
-func (c *cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error {
+func (c *cache) GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error), opts ...Option) error {
+	opt := newOptions(opts...)
+
 	// is disabled, call loader function
 	if c.options.Disabled {
 		o, err := f()
@@ -158,7 +180,7 @@ func (c *cache) GetObject(ctx context.Context, key string, obj interface{}, ttl 
 	done := make(chan error)
 	var err error
 	go func() {
-		done <- c.getObject(key, obj, ttl, f)
+		done <- c.getObject(key, obj, ttl, f, opt)
 	}()
 
 	select {
@@ -169,7 +191,7 @@ func (c *cache) GetObject(ctx context.Context, key string, obj interface{}, ttl 
 	return err
 }
 
-func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) (err error) {
+func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func() (interface{}, error), opt Options) (err error) {
 	if ttl > ttl.Truncate(time.Second) {
 		return errors.WithStack(ErrIllegalTTL)
 	}
@@ -181,20 +203,29 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 	namespacedKey := c.namespacedKey(key)
 	defer c.metric.Observe()(namespacedKey, MetricTypeGetCache, &err)
 
+	// use GetCachePolicy from inout if provided, otherwise take from global options.
+	getPolicy := opt.GetPolicy
+	if getPolicy == 0 {
+		getPolicy = c.options.GetPolicy
+	}
+
 	var it *Item
 	defer func() {
+		if expired && getPolicy == GetPolicyReloadOnExpiry {
+			it, err = c.resetObject(namespacedKey, ttl, f, opt)
+		}
 		// deepcopy before return
 		if err == nil {
 			err = c.copy(it.Object, obj)
 		}
 
-		// if hit but expired, then do a fresh load
-		if expired {
+		// if expired and get policy is not ReloadOnExpiry, then do a async load.
+		if expired && getPolicy != GetPolicyReloadOnExpiry {
 			go func() {
 				// async load metric
 				defer c.metric.Observe()(namespacedKey, MetricTypeAsyncLoad, nil)
 
-				_, resetErr := c.resetObject(namespacedKey, ttl, f)
+				_, resetErr := c.resetObject(namespacedKey, ttl, f, opt)
 				if resetErr != nil {
 					c.options.OnError(errors.WithStack(resetErr))
 					return
@@ -228,7 +259,7 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 			}
 			return v, nil
 		}
-		return c.resetObject(namespacedKey, ttl, f)
+		return c.resetObject(namespacedKey, ttl, f, opt)
 	})
 	if err != nil {
 		return
@@ -238,8 +269,14 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 }
 
 // resetObject load fresh data to redis and in-memory with loader function
-func (c *cache) resetObject(namespacedKey string, ttl time.Duration, f func() (interface{}, error)) (*Item, error) {
+func (c *cache) resetObject(namespacedKey string, ttl time.Duration, f func() (interface{}, error), opt Options) (*Item, error) {
 	itf, err, _ := c.sfg.Do(namespacedKey+"_reset", func() (it interface{}, err error) {
+		// use UpdateCachePolicy from inout if provided, otherwise take from global options.
+		updatePolicy := opt.UpdatePolicy
+		if updatePolicy == 0 {
+			updatePolicy = c.options.UpdatePolicy
+		}
+
 		// add metric for a fresh load
 		defer c.metric.Observe()(namespacedKey, MetricTypeLoad, &err)
 
@@ -261,6 +298,9 @@ func (c *cache) resetObject(namespacedKey string, ttl time.Duration, f func() (i
 			return
 		}
 
+		// update local mem first
+		c.mem.set(namespacedKey, newItem(o, ttl))
+
 		it, err = c.rds.set(namespacedKey, o, ttl)
 		if err != nil {
 			return
@@ -268,10 +308,11 @@ func (c *cache) resetObject(namespacedKey string, ttl time.Duration, f func() (i
 
 		// notifyAll
 		c.notifyAll(&actionRequest{
-			Action:   cacheSet,
-			TypeName: getTypeName(o),
-			Key:      namespacedKey,
-			Object:   o,
+			Action:       cacheSet,
+			TypeName:     getTypeName(o),
+			Key:          namespacedKey,
+			Object:       o,
+			UpdatePolicy: updatePolicy,
 		})
 		return
 	})
@@ -350,7 +391,7 @@ func (c *cache) namespacedKey(key string) string {
 type cacheAction int
 
 const (
-	cacheSet cacheAction = iota // cacheSet == 0
+	cacheSet cacheAction = iota + 1 // cacheSet == 1
 	cacheDelete
 )
 
@@ -379,6 +420,9 @@ type actionRequest struct {
 
 	// the marshaled string of object
 	Payload []byte `json:"payload"`
+
+	// update policy, if NoBroadcast, then won't PUBLISH in set case.
+	UpdatePolicy UpdateCachePolicy `json:"update_policy"`
 }
 
 func (c *cache) actionChannel() string {
@@ -433,6 +477,11 @@ func (c *cache) watch() {
 
 // notifyAll will broadcast the cache change to all cache instances
 func (c *cache) notifyAll(ar *actionRequest) {
+	// if update policy is NoBroadcast, don't broadcast for set.
+	if ar.UpdatePolicy == UpdatePolicyNoBroadcast && ar.Action == cacheSet {
+		return
+	}
+
 	bs, err := marshal(ar.Object)
 	if err != nil {
 		c.options.OnError(errors.WithStack(err))

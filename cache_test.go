@@ -37,7 +37,7 @@ type mockCache struct {
 	delay      time.Duration
 }
 
-func newMockCache(key string, delay, ci time.Duration, checkMetric bool) mockCache {
+func newMockCache(key string, delay, ci time.Duration, checkMetric bool, getPolicy cache.GetCachePolicy, updatePolicy cache.UpdateCachePolicy) mockCache {
 	mock := mockCache{}
 	pool := &redis.Pool{
 		MaxIdle:     2,
@@ -49,7 +49,7 @@ func newMockCache(key string, delay, ci time.Duration, checkMetric bool) mockCac
 			return err
 		},
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", "127.0.0.1:6379")
+			return redis.Dial("tcp", "127.0.0.1:7379")
 		},
 	}
 	metricChan := make(chan metric, 20)
@@ -57,6 +57,8 @@ func newMockCache(key string, delay, ci time.Duration, checkMetric bool) mockCac
 		cache.GetConn(pool.Get),
 		cache.CleanInterval(ci),
 		cache.Separator("#"),
+		cache.GetPolicy(getPolicy),
+		cache.UpdatePolicy(updatePolicy),
 		cache.OnMetric(func(key, objectType string, metricType string, count int, elapsedTime time.Duration) {
 			if metricType == cache.MetricTypeCount || metricType == cache.MetricTypeMemUsage {
 				return
@@ -89,7 +91,7 @@ var _ = Describe("cache test", func() {
 	Context("cache unit test", func() {
 		Context("Test loadFunc", func() {
 			It("loadFunc succeed", func() {
-				mock := newMockCache("load_func_succeed#1", time.Millisecond*1200, time.Second, true)
+				mock := newMockCache("load_func_succeed#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 				mock.ehCache.DeleteFromRedis(mock.key)
 				mock.ehCache.DeleteFromMem(mock.key)
 
@@ -109,7 +111,7 @@ var _ = Describe("cache test", func() {
 				// make sure redis pub finished
 				time.Sleep(time.Millisecond * 10)
 
-				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss, cache.MetricTypeSetRedis,
+				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss, cache.MetricTypeSetMem, cache.MetricTypeSetRedis,
 					cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem}
 
 				for idx, metricType := range metricList {
@@ -117,7 +119,7 @@ var _ = Describe("cache test", func() {
 					case mc := <-mock.metricChan:
 						Ω(mc.Key).To(Equal(mock.key))
 						Ω(mc.Type).To(Equal(metricType))
-						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCache && idx == 6) {
+						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCache && idx == 7) {
 							// the first get_cache should be same as delay
 							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
 						} else {
@@ -129,7 +131,7 @@ var _ = Describe("cache test", func() {
 			})
 
 			It("loadFunc error", func() {
-				mock := newMockCache("load_func_error#1", time.Millisecond*1200, time.Second, true)
+				mock := newMockCache("load_func_error#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 				mock.ehCache.DeleteFromRedis(mock.key)
 				mock.ehCache.DeleteFromMem(mock.key)
 
@@ -158,7 +160,7 @@ var _ = Describe("cache test", func() {
 			})
 
 			It("loadFunc panic string", func() {
-				mock := newMockCache("load_func_panic_string#1", time.Millisecond*1200, time.Second, true)
+				mock := newMockCache("load_func_panic_string#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 				mock.ehCache.DeleteFromRedis(mock.key)
 				mock.ehCache.DeleteFromMem(mock.key)
 
@@ -188,7 +190,7 @@ var _ = Describe("cache test", func() {
 			})
 
 			It("loadFunc panic error", func() {
-				mock := newMockCache("load_func_panic_error#1", time.Millisecond*1200, time.Second, true)
+				mock := newMockCache("load_func_panic_error#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 				mock.ehCache.DeleteFromRedis(mock.key)
 				mock.ehCache.DeleteFromMem(mock.key)
 
@@ -218,7 +220,7 @@ var _ = Describe("cache test", func() {
 			})
 
 			It("loadFunc timeout", func() {
-				mock := newMockCache("load_func_panic_timeout#1", time.Millisecond*1200, time.Second, true)
+				mock := newMockCache("load_func_panic_timeout#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 				mock.ehCache.DeleteFromRedis(mock.key)
 				mock.ehCache.DeleteFromMem(mock.key)
 
@@ -252,7 +254,7 @@ var _ = Describe("cache test", func() {
 
 		Context("Test redis hit", func() {
 			It("redis hit ok", func() {
-				mock := newMockCache("redis_hit_ok#1", time.Millisecond*1200, time.Second, true)
+				mock := newMockCache("redis_hit_ok#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 				mock.ehCache.DeleteFromRedis(mock.key)
 				mock.ehCache.DeleteFromMem(mock.key)
 
@@ -283,16 +285,15 @@ var _ = Describe("cache test", func() {
 				time.Sleep(time.Millisecond * 10)
 
 				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
-					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
+					cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
 					cache.MetricTypeGetRedisHit, cache.MetricTypeSetMem, cache.MetricTypeGetCache,
 				}
-
 				for idx, metricType := range metricList {
 					select {
 					case mc := <-mock.metricChan:
 						Ω(mc.Key).To(Equal(mock.key))
 						Ω(mc.Type).To(Equal(metricType))
-						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCache && idx == 6) {
+						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCache && idx == 7) {
 							// the first get_cache should be same as delay
 							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
 						} else {
@@ -304,8 +305,8 @@ var _ = Describe("cache test", func() {
 			})
 		})
 
-		It("redis hit expired", func() {
-			mock := newMockCache("redis_hit_expired#1", time.Millisecond*1200, time.Second, true)
+		It("redis hit expired return", func() {
+			mock := newMockCache("redis_hit_expired#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 			mock.ehCache.DeleteFromRedis(mock.key)
 			mock.ehCache.DeleteFromMem(mock.key)
 
@@ -336,8 +337,8 @@ var _ = Describe("cache test", func() {
 			time.Sleep(mock.delay + time.Millisecond*10)
 
 			metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
-				cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
-				cache.MetricTypeGetRedisExpired, cache.MetricTypeGetCache, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeAsyncLoad, cache.MetricTypeSetMem,
+				cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
+				cache.MetricTypeGetRedisExpired, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeAsyncLoad, cache.MetricTypeSetMem,
 			}
 
 			for idx, metricType := range metricList {
@@ -345,7 +346,7 @@ var _ = Describe("cache test", func() {
 				case mc := <-mock.metricChan:
 					Ω(mc.Key).To(Equal(mock.key))
 					Ω(mc.Type).To(Equal(metricType))
-					if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad || (mc.Type == cache.MetricTypeGetCache && idx == 6) {
+					if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad || (mc.Type == cache.MetricTypeGetCache && idx == 7) {
 						// the first get_cache should be same as delay
 						Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
 					} else {
@@ -358,7 +359,7 @@ var _ = Describe("cache test", func() {
 
 		Context("Test mem hit", func() {
 			It("mem hit ok", func() {
-				mock := newMockCache("mem_hit_ok#1", time.Millisecond*1200, time.Second*1, true)
+				mock := newMockCache("mem_hit_ok#1", time.Millisecond*1200, time.Second*1, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 				mock.ehCache.DeleteFromRedis(mock.key)
 				mock.ehCache.DeleteFromMem(mock.key)
 
@@ -385,7 +386,7 @@ var _ = Describe("cache test", func() {
 				Ω(&v).To(Equal(mock.val))
 
 				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
-					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeGetMemHit, cache.MetricTypeGetCache,
+					cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeGetMemHit, cache.MetricTypeGetCache,
 				}
 
 				for idx, metricType := range metricList {
@@ -393,7 +394,7 @@ var _ = Describe("cache test", func() {
 					case mc := <-mock.metricChan:
 						Ω(mc.Key).To(Equal(mock.key))
 						Ω(mc.Type).To(Equal(metricType))
-						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCache && idx == 6) {
+						if mc.Type == cache.MetricTypeLoad || (mc.Type == cache.MetricTypeGetCache && idx == 7) {
 							// the first get_cache should be same as delay
 							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
 						} else {
@@ -404,8 +405,8 @@ var _ = Describe("cache test", func() {
 				}
 			})
 
-			It("mem hit expired", func() {
-				mock := newMockCache("mem_hit_expired#1", time.Millisecond*1200, time.Second*5, true)
+			It("mem hit expired return", func() {
+				mock := newMockCache("mem_hit_expired#1", time.Millisecond*1200, time.Second*5, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 				mock.ehCache.DeleteFromRedis(mock.key)
 				mock.ehCache.DeleteFromMem(mock.key)
 
@@ -435,8 +436,8 @@ var _ = Describe("cache test", func() {
 				time.Sleep(mock.delay + time.Millisecond*10)
 
 				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
-					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeGetMemExpired, cache.MetricTypeGetCache,
-					cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeAsyncLoad, cache.MetricTypeSetMem,
+					cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeGetMemExpired, cache.MetricTypeGetCache,
+					cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeAsyncLoad, cache.MetricTypeSetMem,
 				}
 
 				for idx, metricType := range metricList {
@@ -444,7 +445,58 @@ var _ = Describe("cache test", func() {
 					case mc := <-mock.metricChan:
 						Ω(mc.Key).To(Equal(mock.key))
 						Ω(mc.Type).To(Equal(metricType))
-						if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad || (mc.Type == cache.MetricTypeGetCache && idx == 6) {
+						if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad || (mc.Type == cache.MetricTypeGetCache && idx == 7) {
+							// the first get_cache should be same as delay
+							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
+						} else {
+							Ω(math.Abs(float64(mc.ElapsedTime)) < float64(time.Millisecond*10)).To(Equal(true))
+						}
+					default:
+					}
+				}
+			})
+
+			It("mem hit expired option reload", func() {
+				mock := newMockCache("mem_hit_expired#1", time.Millisecond*1200, time.Second*5, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
+				mock.ehCache.DeleteFromRedis(mock.key)
+				mock.ehCache.DeleteFromMem(mock.key)
+
+				loadFunc := func() (interface{}, error) {
+					time.Sleep(mock.delay)
+					return mock.val, nil
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
+
+				var v TestStruct
+				err := mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*1, loadFunc)
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(mock.val))
+
+				// wait 1100 ms to expire mem
+				time.Sleep(time.Millisecond * 1100)
+
+				ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
+				err = mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*2, loadFunc, cache.GetPolicy(cache.GetPolicyReloadOnExpiry))
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(mock.val))
+
+				// wait last async load finish
+				time.Sleep(mock.delay + time.Millisecond*10)
+
+				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
+					cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeSetMem, cache.MetricTypeGetMemExpired,
+					cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache,
+				}
+
+				for idx, metricType := range metricList {
+					select {
+					case mc := <-mock.metricChan:
+						Ω(mc.Key).To(Equal(mock.key))
+						Ω(mc.Type).To(Equal(metricType))
+						if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad || (mc.Type == cache.MetricTypeGetCache && (idx == 7 || idx == 13)) {
 							// the first get_cache should be same as delay
 							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
 						} else {
@@ -458,7 +510,7 @@ var _ = Describe("cache test", func() {
 
 		Context("Test delete", func() {
 			It("delete ok", func() {
-				mock := newMockCache("delete_ok#1", time.Millisecond*1200, time.Second*1, true)
+				mock := newMockCache("delete_ok#1", time.Millisecond*1200, time.Second*1, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 				mock.ehCache.DeleteFromRedis(mock.key)
 				mock.ehCache.DeleteFromMem(mock.key)
 				mock.ehCache.Delete(mock.key)
@@ -482,7 +534,7 @@ var _ = Describe("cache test", func() {
 
 		Context("Test setobject", func() {
 			It("setobject ok", func() {
-				mock := newMockCache("set_object_ok#1", time.Millisecond*1200, time.Second*1, true)
+				mock := newMockCache("set_object_ok#1", time.Millisecond*1200, time.Second*1, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 				mock.ehCache.DeleteFromRedis(mock.key)
 				mock.ehCache.DeleteFromMem(mock.key)
 
@@ -494,7 +546,7 @@ var _ = Describe("cache test", func() {
 				// wait redis-pub received
 				time.Sleep(time.Millisecond * 10)
 
-				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeSetRedis, cache.MetricTypeSetCache, cache.MetricTypeSetMem}
+				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeSetCache, cache.MetricTypeSetMem}
 
 				for _, metricType := range metricList {
 					select {
@@ -507,5 +559,110 @@ var _ = Describe("cache test", func() {
 				}
 			})
 		})
+
+		Context("Test hit EXPIRED with reloadOnExpiry", func() {
+			It("mem hit expired reload", func() {
+				mock := newMockCache("mem_hit_expired_reload#1", time.Millisecond*1200, time.Second*5, true, cache.GetPolicyReloadOnExpiry, cache.UpdatePolicyNoBroadcast)
+				mock.ehCache.DeleteFromRedis(mock.key)
+				mock.ehCache.DeleteFromMem(mock.key)
+
+				loadFunc := func() (interface{}, error) {
+					time.Sleep(mock.delay)
+					return mock.val, nil
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
+
+				var v TestStruct
+				err := mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*1, loadFunc)
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(mock.val))
+
+				// wait 1100 ms to expire mem
+				time.Sleep(time.Millisecond * 1100)
+
+				ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
+				defer cancel()
+				err = mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*2, loadFunc)
+				Ω(err).ToNot(HaveOccurred())
+				Ω(&v).To(Equal(mock.val))
+
+				// wait last async load finish
+				time.Sleep(mock.delay + time.Millisecond*10)
+
+				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
+					cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeGetMemExpired,
+					cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache,
+				}
+				for idx, metricType := range metricList {
+					select {
+					case mc := <-mock.metricChan:
+						Ω(mc.Key).To(Equal(mock.key))
+						Ω(mc.Type).To(Equal(metricType))
+						if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad || (mc.Type == cache.MetricTypeGetCache && (idx == 7 || idx == 12)) {
+							// the first get_cache should be same as delay
+							Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
+						} else {
+							Ω(math.Abs(float64(mc.ElapsedTime)) < float64(time.Millisecond*10)).To(Equal(true))
+						}
+					default:
+					}
+				}
+			})
+		})
+
+		It("redis hit expired reload", func() {
+			mock := newMockCache("redis_hit_expired_reload#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReloadOnExpiry, cache.UpdatePolicyNoBroadcast)
+			mock.ehCache.DeleteFromRedis(mock.key)
+			mock.ehCache.DeleteFromMem(mock.key)
+
+			loadFunc := func() (interface{}, error) {
+				time.Sleep(mock.delay)
+				return mock.val, nil
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+			defer cancel()
+
+			var v TestStruct
+			err := mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*1, loadFunc)
+			Ω(err).ToNot(HaveOccurred())
+			Ω(&v).To(Equal(mock.val))
+
+			// wait redis expired
+			time.Sleep(time.Millisecond * 1010)
+			mock.ehCache.DeleteFromMem(mock.key)
+
+			ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
+			defer cancel()
+			err = mock.ehCache.GetObject(ctx, mock.key, &v, time.Second*1, loadFunc)
+			Ω(err).ToNot(HaveOccurred())
+			Ω(&v).To(Equal(mock.val))
+
+			// make sure redis pub finished, mem get updated
+			time.Sleep(mock.delay + time.Millisecond*10)
+
+			metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss, cache.MetricTypeGetRedisMiss,
+				cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache, cache.MetricTypeDeleteMem, cache.MetricTypeGetMemMiss,
+				cache.MetricTypeGetRedisExpired, cache.MetricTypeSetMem, cache.MetricTypeSetRedis, cache.MetricTypeLoad, cache.MetricTypeGetCache,
+			}
+
+			for idx, metricType := range metricList {
+				select {
+				case mc := <-mock.metricChan:
+					Ω(mc.Key).To(Equal(mock.key))
+					Ω(mc.Type).To(Equal(metricType))
+					if mc.Type == cache.MetricTypeLoad || mc.Type == cache.MetricTypeAsyncLoad || (mc.Type == cache.MetricTypeGetCache && (idx == 7 || idx == 14)) {
+						// the first get_cache should be same as delay
+						Ω(math.Abs(float64(mc.ElapsedTime-mock.delay)) < float64(time.Millisecond*10)).To(Equal(true))
+					} else {
+						Ω(math.Abs(float64(mc.ElapsedTime)) < float64(time.Millisecond*10)).To(Equal(true))
+					}
+				default:
+				}
+			}
+		})
+
 	})
 })
