@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -431,6 +432,7 @@ func (c *cache) actionChannel() string {
 
 // watch the cache update
 func (c *cache) watch() {
+begin:
 	conn := c.options.GetConn()
 	defer conn.Close()
 
@@ -471,6 +473,10 @@ func (c *cache) watch() {
 		case error:
 			c.options.OnError(errors.WithStack(v))
 			time.Sleep(time.Second) // Wait for a second before attempting to receive messages again
+			if strings.Contains(v.Error(), "use of closed network connection") || strings.Contains(v.Error(), "connect: connection refused") {
+				// if connection becomes invalid, then restart watch with new conn
+				goto begin
+			}
 		}
 	}
 }
