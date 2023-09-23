@@ -49,7 +49,7 @@ func newMockCache(key string, delay, ci time.Duration, checkMetric bool, getPoli
 			return err
 		},
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", "127.0.0.1:6379")
+			return redis.Dial("tcp", "127.0.0.1:7379")
 		},
 	}
 	metricChan := make(chan metric, 20)
@@ -74,7 +74,7 @@ func newMockCache(key string, delay, ci time.Duration, checkMetric bool, getPoli
 			}
 			metricChan <- mc
 		}),
-		cache.OnError(func(err error) {
+		cache.OnError(func(ctx context.Context, err error) {
 			log.Printf("OnError:%+v", err)
 		}),
 	)
@@ -513,7 +513,7 @@ var _ = Describe("cache test", func() {
 				mock := newMockCache("delete_ok#1", time.Millisecond*1200, time.Second*1, true, cache.GetPolicyReturnExpired, cache.UpdatePolicyBroadcast)
 				mock.ehCache.DeleteFromRedis(mock.key)
 				mock.ehCache.DeleteFromMem(mock.key)
-				mock.ehCache.Delete(mock.key)
+				mock.ehCache.Delete(context.Background(), mock.key)
 
 				// wait redis-pub received
 				time.Sleep(time.Millisecond * 10)

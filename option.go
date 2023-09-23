@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -49,7 +50,7 @@ type Options struct {
 	Metric Metrics
 
 	// must be provided for cache initialization, handle internal error
-	OnError func(err error)
+	OnError func(ctx context.Context, err error)
 }
 
 type Option func(*Options)
@@ -98,7 +99,7 @@ func OnMetric(onMetric func(key, objectType string, metricType string, count int
 	}
 }
 
-func OnError(onError func(err error)) Option {
+func OnError(onError func(ctx context.Context, err error)) Option {
 	return func(o *Options) {
 		o.OnError = onError
 	}

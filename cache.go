@@ -29,7 +29,7 @@ type Cache interface {
 	// suggest to use object_type#id as key or any other pattern which can easily extract object, aggregate metric for same object in onMetric
 	GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error), opts ...Option) error
 
-	Delete(key string) error
+	Delete(ctx context.Context, key string) error
 
 	// Disable GetObject will call loader function in case cache is disabled.
 	Disable()
@@ -117,7 +117,7 @@ func (c *cache) SetObject(ctx context.Context, key string, obj interface{}, ttl 
 	done := make(chan error)
 	var err error
 	go func() {
-		done <- c.setObject(key, obj, ttl, opt)
+		done <- c.setObject(ctx, key, obj, ttl, opt)
 	}()
 
 	select {
@@ -128,7 +128,7 @@ func (c *cache) SetObject(ctx context.Context, key string, obj interface{}, ttl 
 	return err
 }
 
-func (c *cache) setObject(key string, obj interface{}, ttl time.Duration, opt Options) (err error) {
+func (c *cache) setObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, opt Options) (err error) {
 	if ttl > ttl.Truncate(time.Second) {
 		return errors.WithStack(ErrIllegalTTL)
 	}
@@ -154,13 +154,15 @@ func (c *cache) setObject(key string, obj interface{}, ttl time.Duration, opt Op
 			return nil, errors.WithStack(err)
 		}
 
-		c.notifyAll(&actionRequest{
-			Action:       cacheSet,
-			TypeName:     typeName,
-			Key:          namespacedKey,
-			Object:       obj,
-			UpdatePolicy: updatePolicy,
-		})
+		c.notifyAll(
+			ctx,
+			&actionRequest{
+				Action:       cacheSet,
+				TypeName:     typeName,
+				Key:          namespacedKey,
+				Object:       obj,
+				UpdatePolicy: updatePolicy,
+			})
 		return nil, nil
 	})
 	return err
@@ -175,13 +177,13 @@ func (c *cache) GetObject(ctx context.Context, key string, obj interface{}, ttl 
 		if err != nil {
 			return err
 		}
-		return c.copy(o, obj)
+		return c.copy(ctx, o, obj)
 	}
 
 	done := make(chan error)
 	var err error
 	go func() {
-		done <- c.getObject(key, obj, ttl, f, opt)
+		done <- c.getObject(ctx, key, obj, ttl, f, opt)
 	}()
 
 	select {
@@ -192,7 +194,7 @@ func (c *cache) GetObject(ctx context.Context, key string, obj interface{}, ttl 
 	return err
 }
 
-func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func() (interface{}, error), opt Options) (err error) {
+func (c *cache) getObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error), opt Options) (err error) {
 	if ttl > ttl.Truncate(time.Second) {
 		return errors.WithStack(ErrIllegalTTL)
 	}
@@ -213,11 +215,11 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 	var it *Item
 	defer func() {
 		if expired && getPolicy == GetPolicyReloadOnExpiry {
-			it, err = c.resetObject(namespacedKey, ttl, f, opt)
+			it, err = c.resetObject(ctx, namespacedKey, ttl, f, opt)
 		}
 		// deepcopy before return
 		if err == nil {
-			err = c.copy(it.Object, obj)
+			err = c.copy(ctx, it.Object, obj)
 		}
 
 		// if expired and get policy is not ReloadOnExpiry, then do a async load.
@@ -226,9 +228,9 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 				// async load metric
 				defer c.metric.Observe()(namespacedKey, MetricTypeAsyncLoad, nil)
 
-				_, resetErr := c.resetObject(namespacedKey, ttl, f, opt)
+				_, resetErr := c.resetObject(ctx, namespacedKey, ttl, f, opt)
 				if resetErr != nil {
-					c.options.OnError(errors.WithStack(resetErr))
+					c.options.OnError(ctx, errors.WithStack(resetErr))
 					return
 				}
 			}()
@@ -260,7 +262,7 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 			}
 			return v, nil
 		}
-		return c.resetObject(namespacedKey, ttl, f, opt)
+		return c.resetObject(ctx, namespacedKey, ttl, f, opt)
 	})
 	if err != nil {
 		return
@@ -270,7 +272,7 @@ func (c *cache) getObject(key string, obj interface{}, ttl time.Duration, f func
 }
 
 // resetObject load fresh data to redis and in-memory with loader function
-func (c *cache) resetObject(namespacedKey string, ttl time.Duration, f func() (interface{}, error), opt Options) (*Item, error) {
+func (c *cache) resetObject(ctx context.Context, namespacedKey string, ttl time.Duration, f func() (interface{}, error), opt Options) (*Item, error) {
 	itf, err, _ := c.sfg.Do(namespacedKey+"_reset", func() (it interface{}, err error) {
 		// use UpdateCachePolicy from inout if provided, otherwise take from global options.
 		updatePolicy := opt.UpdatePolicy
@@ -289,7 +291,7 @@ func (c *cache) resetObject(namespacedKey string, ttl time.Duration, f func() (i
 				default:
 					err = errors.New(fmt.Sprint(r))
 				}
-				c.options.OnError(err)
+				c.options.OnError(ctx, err)
 			}
 		}()
 
@@ -308,13 +310,15 @@ func (c *cache) resetObject(namespacedKey string, ttl time.Duration, f func() (i
 		}
 
 		// notifyAll
-		c.notifyAll(&actionRequest{
-			Action:       cacheSet,
-			TypeName:     getTypeName(o),
-			Key:          namespacedKey,
-			Object:       o,
-			UpdatePolicy: updatePolicy,
-		})
+		c.notifyAll(
+			ctx,
+			&actionRequest{
+				Action:       cacheSet,
+				TypeName:     getTypeName(o),
+				Key:          namespacedKey,
+				Object:       o,
+				UpdatePolicy: updatePolicy,
+			})
 		return
 	})
 	if err != nil {
@@ -334,7 +338,7 @@ func (c *cache) DeleteFromRedis(key string) error {
 }
 
 // Delete notify all cache instances to delete cache key
-func (c *cache) Delete(key string) (err error) {
+func (c *cache) Delete(ctx context.Context, key string) (err error) {
 	namespacedKey := c.namespacedKey(key)
 	defer c.metric.Observe()(namespacedKey, MetricTypeDeleteCache, &err)
 
@@ -344,10 +348,12 @@ func (c *cache) Delete(key string) (err error) {
 		return
 	}
 
-	c.notifyAll(&actionRequest{
-		Action: cacheDelete,
-		Key:    namespacedKey,
-	})
+	c.notifyAll(
+		ctx,
+		&actionRequest{
+			Action: cacheDelete,
+			Key:    namespacedKey,
+		})
 	return
 }
 
@@ -360,7 +366,7 @@ func (c *cache) checkType(typeName string, obj interface{}, ttl time.Duration) {
 }
 
 // copy object to return, to avoid dirty data
-func (c *cache) copy(src, dst interface{}) (err error) {
+func (c *cache) copy(ctx context.Context, src, dst interface{}) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			switch v := r.(type) {
@@ -369,7 +375,7 @@ func (c *cache) copy(src, dst interface{}) (err error) {
 			default:
 				err = errors.New(fmt.Sprint(r))
 			}
-			c.options.OnError(err)
+			c.options.OnError(ctx, err)
 		}
 	}()
 
@@ -432,13 +438,14 @@ func (c *cache) actionChannel() string {
 
 // watch the cache update
 func (c *cache) watch() {
+	ctx := context.Background()
 begin:
 	conn := c.options.GetConn()
 	defer conn.Close()
 
 	psc := redis.PubSubConn{Conn: conn}
 	if err := psc.Subscribe(c.actionChannel()); err != nil {
-		c.options.OnError(errors.WithStack(err))
+		c.options.OnError(ctx, errors.WithStack(err))
 		return
 	}
 
@@ -447,7 +454,7 @@ begin:
 		case redis.Message:
 			var ar actionRequest
 			if err := unmarshal(v.Data, &ar); err != nil {
-				c.options.OnError(errors.WithStack(err))
+				c.options.OnError(ctx, errors.WithStack(err))
 				continue
 			}
 
@@ -460,7 +467,7 @@ begin:
 
 				obj := deepcopy.Copy(objType.(*objectType).typ)
 				if err := unmarshal(ar.Payload, obj); err != nil {
-					c.options.OnError(errors.WithStack(err))
+					c.options.OnError(ctx, errors.WithStack(err))
 					continue
 				}
 
@@ -471,7 +478,7 @@ begin:
 				c.mem.delete(ar.Key)
 			}
 		case error:
-			c.options.OnError(errors.WithStack(v))
+			c.options.OnError(ctx, errors.WithStack(v))
 			time.Sleep(time.Second) // Wait for a second before attempting to receive messages again
 			if strings.Contains(v.Error(), "use of closed network connection") || strings.Contains(v.Error(), "connect: connection refused") {
 				// if connection becomes invalid, then restart watch with new conn
@@ -482,7 +489,7 @@ begin:
 }
 
 // notifyAll will broadcast the cache change to all cache instances
-func (c *cache) notifyAll(ar *actionRequest) {
+func (c *cache) notifyAll(ctx context.Context, ar *actionRequest) {
 	// if update policy is NoBroadcast, don't broadcast for set.
 	if ar.UpdatePolicy == UpdatePolicyNoBroadcast && ar.Action == cacheSet {
 		return
@@ -490,14 +497,14 @@ func (c *cache) notifyAll(ar *actionRequest) {
 
 	bs, err := marshal(ar.Object)
 	if err != nil {
-		c.options.OnError(errors.WithStack(err))
+		c.options.OnError(ctx, errors.WithStack(err))
 		return
 	}
 	ar.Payload = bs
 
 	msgBody, err := marshal(ar)
 	if err != nil {
-		c.options.OnError(errors.WithStack(err))
+		c.options.OnError(ctx, errors.WithStack(err))
 		return
 	}
 
@@ -506,7 +513,7 @@ func (c *cache) notifyAll(ar *actionRequest) {
 
 	_, err = conn.Do("PUBLISH", c.actionChannel(), string(msgBody))
 	if err != nil {
-		c.options.OnError(errors.WithStack(err))
+		c.options.OnError(ctx, errors.WithStack(err))
 		return
 	}
 }

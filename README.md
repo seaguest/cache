@@ -121,22 +121,23 @@ sequenceDiagram
 
 ```go
 type Cache interface {
-    SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration) error
-
+    SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, opts ...Option) error
+    
     // GetObject loader function f() will be called in case cache all miss
     // suggest to use object_type#id as key or any other pattern which can easily extract object, aggregate metric for same object in onMetric
-    GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error)) error
-
-    Delete(key string) error
-
+    GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error), opts ...Option) error
+    
+    Delete(ctx context.Context, key string) error
+    
     // Disable GetObject will call loader function in case cache is disabled.
     Disable()
-
+    
     // DeleteFromMem allows to delete key from mem, for test purpose
     DeleteFromMem(key string)
-
+    
     // DeleteFromRedis allows to delete key from redis, for test purpose
     DeleteFromRedis(key string) error
+
 }
 ```
 
@@ -194,10 +195,12 @@ func main() {
 
 	ehCache := cache.New(
 		cache.GetConn(pool.Get),
+		cache.GetPolicy(cache.GetPolicyReturnExpired),
+		cache.UpdatePolicy(cache.UpdatePolicyNoBroadcast),
 		cache.OnMetric(func(key string, metric string, elapsedTime time.Duration) {
 			// handle metric
 		}),
-		cache.OnError(func(err error) {
+		cache.OnError(func(ctx context.Context, err error) {
 			// handle error
 		}),
 	)
