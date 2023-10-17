@@ -1,10 +1,8 @@
 # cache
 
-A lightweight and high-performance distributed caching, a cache-aside pattern implementation built on top of in-memory + Redis. The cache consists of one global Redis instance and multiple in-memory instances, with any data changes being synchronized across all instances.
+This is a high-performance, lightweight distributed caching solution that implements the cache-aside pattern, built upon a combination of in-memory and Redis. The cache architecture includes a singular global Redis instance and multiple in-memory instances. Data changes can be synchronized across all in-memory cache instances depending on the cache update policy.
 
-The library is designed to prioritize retrieving data from the in-memory cache first, followed by the Redis cache if the data is not found locally. If the data is still not found in either cache, the library will call a loader function to retrieve the data and store it in the cache for future access.
-
-One of the key benefits of this library is its performance. By leveraging both in-memory and Redis caches, the library can quickly retrieve frequently accessed data without having to rely solely on network calls to Redis. Additionally, the use of a loader function allows for on-demand retrieval of data, reducing the need for expensive data preloading.
+The library's design gives priority to data retrieval from the in-memory cache first. If the data isn't found in the local memory cache, it then resorts to the Redis cache. Should the data be unavailable in both caches, the library invokes a loader function to fetch the data, storing it in the cache for future access, thus ensuring an always-on cache.
 
 ![alt text](./assets/cache.png "cache-aside pattern")
 
@@ -12,11 +10,20 @@ One of the key benefits of this library is its performance. By leveraging both i
 
 - **Two-level cache** : in-memory cache first, redis-backed
 - **Easy to use** : simple api with minimum configuration.
-- **Data consistency** : all in-memory instances will be notified by `Pub-Sub` if any value gets updated, redis and in-memory will keep consistent.
+- **Data consistency** : all in-memory instances will be notified by `Pub-Sub` if any value gets updated, redis and in-memory will keep consistent (if cache update policy configured to UpdatePolicyBroadcast).
 - **Concurrency**: singleflight is used to avoid cache breakdown.
 - **Metrics** : provide callback function to measure the cache metrics.
 
 ## Sequence diagram
+
+### cache get policy
+ - GetPolicyReturnExpired: return found object even if it has expired.
+ - GetPolicyReloadOnExpiry: reload object if found object has expired, then return.
+### cache update policy
+ - UpdatePolicyBroadcast: notify all cache instances if there is any data change.
+ - UpdatePolicyNoBroadcast: don't notify all cache instances if there is any data change.
+
+The below sequence diagrams have GetPolicyReturnExpired + UpdatePolicyBroadcast.
 
 ### Reload from loader function
 
