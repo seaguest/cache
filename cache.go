@@ -20,7 +20,6 @@ var (
 
 const (
 	defaultNamespace = "default"
-	asyncLoadTimeout = time.Second * 30
 )
 
 type Cache interface {
@@ -215,18 +214,26 @@ func (c *cache) getObject(ctx context.Context, key string, obj interface{}, ttl 
 
 	var it *Item
 	defer func() {
-		if expired {
-			switch getPolicy {
-			case GetPolicyReloadOnExpiry:
-				it, err = c.resetObject(ctx, namespacedKey, ttl, f, opt)
-			default:
-				go c.asyncLoad(ctx, namespacedKey, ttl, f, opt)
-			}
+		if expired && getPolicy == GetPolicyReloadOnExpiry {
+			it, err = c.resetObject(ctx, namespacedKey, ttl, f, opt)
 		}
-
 		// deepcopy before return
 		if err == nil {
 			err = c.copy(ctx, it.Object, obj)
+		}
+
+		// if expired and get policy is not ReloadOnExpiry, then do a async load.
+		if expired && getPolicy != GetPolicyReloadOnExpiry {
+			go func() {
+				// async load metric
+				defer c.metric.Observe()(namespacedKey, MetricTypeAsyncLoad, nil)
+
+				_, resetErr := c.resetObject(ctx, namespacedKey, ttl, f, opt)
+				if resetErr != nil {
+					c.options.OnError(ctx, errors.WithStack(resetErr))
+					return
+				}
+			}()
 		}
 	}()
 
@@ -262,32 +269,6 @@ func (c *cache) getObject(ctx context.Context, key string, obj interface{}, ttl 
 	}
 	it = itf.(*Item)
 	return
-}
-
-func (c *cache) asyncLoad(ctx context.Context, namespacedKey string, ttl time.Duration, f func() (interface{}, error), opt Options) {
-	// async load metric
-	defer c.metric.Observe()(namespacedKey, MetricTypeAsyncLoad, nil)
-
-	// to avoid parent context cancel for async load.
-	newCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), asyncLoadTimeout)
-	defer cancel()
-
-	done := make(chan error)
-	var err error
-	go func() {
-		_, resetErr := c.resetObject(newCtx, namespacedKey, ttl, f, opt)
-		done <- resetErr
-	}()
-
-	select {
-	case err = <-done:
-	case <-newCtx.Done():
-		err = errors.WithStack(newCtx.Err())
-	}
-	if err != nil {
-		c.options.OnError(ctx, errors.WithStack(err))
-		return
-	}
 }
 
 // resetObject load fresh data to redis and in-memory with loader function

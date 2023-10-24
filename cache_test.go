@@ -49,7 +49,7 @@ func newMockCache(key string, delay, ci time.Duration, checkMetric bool, getPoli
 			return err
 		},
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", "127.0.0.1:6379")
+			return redis.Dial("tcp", "127.0.0.1:7379")
 		},
 	}
 	metricChan := make(chan metric, 20)
