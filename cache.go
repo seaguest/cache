@@ -3,14 +3,12 @@ package cache
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
+	"github.com/jinzhu/copier"
 	"github.com/pkg/errors"
-	"github.com/seaguest/deepcopy"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -38,9 +36,6 @@ type Cache interface {
 
 type cache struct {
 	options Options
-
-	// store the pkg_path+type<->object mapping
-	types sync.Map
 
 	// rds cache, handles redis level cache
 	rds *redisCache
@@ -282,11 +277,11 @@ func (c *cache) copy(ctx context.Context, src, dst any) (err error) {
 		}
 	}()
 
-	v := deepcopy.Copy(src)
-	if reflect.ValueOf(v).IsValid() {
-		reflect.ValueOf(dst).Elem().Set(reflect.Indirect(reflect.ValueOf(v)))
+	err = copier.Copy(dst, src)
+	if err != nil {
+		return errors.WithStack(err)
 	}
-	return
+	return nil
 }
 
 func (c *cache) namespacedKey(key string) string {
