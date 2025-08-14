@@ -14,13 +14,6 @@ const (
 	GetPolicyReloadOnExpiry
 )
 
-type UpdateCachePolicy int
-
-const (
-	UpdatePolicyBroadcast UpdateCachePolicy = iota + 1
-	UpdatePolicyNoBroadcast
-)
-
 type Options struct {
 	Namespace string
 
@@ -33,9 +26,6 @@ type Options struct {
 
 	// get policy when data is expired, ReturnExpired or ReloadOnExpiry
 	GetPolicy GetCachePolicy
-
-	// update policy when data is updated, Broadcast or NoBroadcast
-	UpdatePolicy UpdateCachePolicy
 
 	// will call loader function when disabled id true
 	Disabled bool
@@ -108,12 +98,6 @@ func OnError(onError func(ctx context.Context, err error)) Option {
 func GetPolicy(getPolicy GetCachePolicy) Option {
 	return func(o *Options) {
 		o.GetPolicy = getPolicy
-	}
-}
-
-func UpdatePolicy(updatePolicy UpdateCachePolicy) Option {
-	return func(o *Options) {
-		o.UpdatePolicy = updatePolicy
 	}
 }
 
