@@ -89,7 +89,7 @@ func New(options ...Option) Cache {
 	c.metric.separator = opts.Separator
 	c.mem = newMemCache(opts.CleanInterval, c.metric)
 	c.rds = newRedisCache(opts.GetConn, opts.RedisTTLFactor, c.metric)
-	go c.watch()
+	go c.watchDelete()
 	return c
 }
 
@@ -292,8 +292,8 @@ func (c *cache) deleteChannel() string {
 	return c.options.Namespace + ":delete_channel"
 }
 
-// watch the cache update
-func (c *cache) watch() {
+// watchDelete watch the delete channel and delete the cache from mem
+func (c *cache) watchDelete() {
 	ctx := context.Background()
 begin:
 	conn := c.options.GetConn()
