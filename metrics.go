@@ -63,5 +63,8 @@ func (m Metrics) Observe() func(string, interface{}, *error) {
 
 // Set used for gauge metrics, counts and memory usage metrics
 func (m Metrics) Set(objectType, metric string, count int) {
+	if m.onMetric == nil {
+		return
+	}
 	m.onMetric("*", objectType, metric, count, 0)
 }

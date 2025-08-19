@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
-	"github.com/jinzhu/copier"
 	"github.com/pkg/errors"
+	"github.com/seaguest/deepcopy"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -277,7 +277,7 @@ func (c *cache) copy(ctx context.Context, src, dst any) (err error) {
 		}
 	}()
 
-	err = copier.Copy(dst, src)
+	err = deepcopy.CopyTo(src, dst)
 	if err != nil {
 		return errors.WithStack(err)
 	}
