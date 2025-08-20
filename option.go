@@ -41,6 +41,9 @@ type Options struct {
 
 	// must be provided for cache initialization, handle internal error
 	OnError func(ctx context.Context, err error)
+
+	// enable debug logging for cache operations
+	DebugLog bool
 }
 
 type Option func(*Options)
@@ -98,6 +101,12 @@ func OnError(onError func(ctx context.Context, err error)) Option {
 func GetPolicy(getPolicy GetCachePolicy) Option {
 	return func(o *Options) {
 		o.GetPolicy = getPolicy
+	}
+}
+
+func DebugLog(debugLog bool) Option {
+	return func(o *Options) {
+		o.DebugLog = debugLog
 	}
 }
 

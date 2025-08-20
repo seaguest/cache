@@ -1,8 +1,28 @@
 package cache
 
+/*
+Cache Library with Structured Logging Support
+
+This package provides a two-tier caching system with Redis and in-memory storage.
+Debug logging can be enabled using the DebugLog option to log cache operations.
+
+Example usage with debug logging:
+	c := cache.New(
+		cache.GetConn(redisPool.Get),
+		cache.Namespace("myapp"),
+		cache.Separator("#"),
+		cache.DebugLog(true), // Enable debug logging
+		cache.OnError(func(ctx context.Context, err error) {
+			log.Printf("Cache error: %+v", err)
+		}),
+	)
+*/
+
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -46,6 +66,8 @@ type cache struct {
 	sfg singleflight.Group
 
 	metric Metrics
+
+	logger *slog.Logger
 }
 
 func New(options ...Option) Cache {
@@ -90,11 +112,23 @@ func New(options ...Option) Cache {
 	c.mem = newMemCache(opts.CleanInterval, c.metric)
 	c.rds = newRedisCache(opts.GetConn, opts.RedisTTLFactor, c.metric)
 	go c.watchDelete()
+
+	// Set up logger based on debug option
+	var logLevel slog.Leveler = slog.LevelInfo
+	if opts.DebugLog {
+		logLevel = slog.LevelDebug
+	}
+	c.logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: logLevel,
+	}))
 	return c
 }
 
 func (c *cache) GetObject(ctx context.Context, key string, obj any, ttl time.Duration, f func() (any, error), opts ...Option) error {
 	opt := newOptions(opts...)
+
+	c.logger.Debug("[seaguest/cache] GetObject called", "key", key, "ttl", ttl)
+	defer c.logger.Debug("[seaguest/cache] GetObject completed", "key", key, "ttl", ttl, "obj", obj)
 
 	// is disabled, call loader function
 	if c.options.Disabled {
@@ -275,6 +309,7 @@ func (c *cache) copy(ctx context.Context, src, dst any) (err error) {
 			}
 			c.options.OnError(ctx, err)
 		}
+		c.logger.Debug("[seaguest/cache] Copy completed", "src", src, "dst", dst, "err", err)
 	}()
 
 	err = deepcopy.CopyTo(src, dst)
