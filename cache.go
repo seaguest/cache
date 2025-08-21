@@ -290,7 +290,7 @@ func (c *cache) Delete(ctx context.Context, key string) (err error) {
 	conn := c.options.GetConn()
 	defer conn.Close()
 
-	_, err = conn.Do("PUBLISH", c.deleteChannel(), key)
+	_, err = conn.Do("PUBLISH", c.deleteChannel(), namespacedKey)
 	if err != nil {
 		c.options.OnError(ctx, errors.WithStack(err))
 	}
