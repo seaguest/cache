@@ -46,12 +46,6 @@ type Cache interface {
 	GetObject(ctx context.Context, key string, obj any, ttl time.Duration, f func() (any, error), opts ...Option) error
 
 	Delete(ctx context.Context, key string) error
-
-	// DeleteFromMem allows to delete key from mem, for test purpose
-	DeleteFromMem(key string)
-
-	// DeleteFromRedis allows to delete key from redis, for test purpose
-	DeleteFromRedis(key string) error
 }
 
 type cache struct {

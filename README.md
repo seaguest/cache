@@ -10,7 +10,8 @@ The library's design gives priority to data retrieval from the in-memory cache f
 
 - **Two-level cache** : in-memory cache first, redis-backed
 - **Easy to use** : simple api with minimum configuration.
-- **Data consistency** : all in-memory instances will be notified by `Pub-Sub` if any value gets updated, redis and in-memory will keep consistent (if cache update policy configured to UpdatePolicyBroadcast).
+- **Data consistency** : all in-memory instances will be notified by `Pub-Sub`
+  if any value gets deleted, other in-memory instances will update.
 - **Concurrency**: singleflight is used to avoid cache breakdown.
 - **Metrics** : provide callback function to measure the cache metrics.
 
@@ -19,9 +20,7 @@ The library's design gives priority to data retrieval from the in-memory cache f
 ### cache get policy
  - GetPolicyReturnExpired: return found object even if it has expired.
  - GetPolicyReloadOnExpiry: reload object if found object has expired, then return.
-### cache update policy
- - UpdatePolicyBroadcast: notify all cache instances if there is any data change.
- - UpdatePolicyNoBroadcast: don't notify all cache instances if there is any data change.
+
 
 The below sequence diagrams have GetPolicyReturnExpired + UpdatePolicyBroadcast.
 
@@ -82,24 +81,7 @@ sequenceDiagram
     end
 ```
 
-### Set
 
-```mermaid
-sequenceDiagram
-    participant APP as Application
-    participant M as cache
-    participant L as Local Cache
-    participant L2 as Local Cache2
-    participant S as Shared Cache
-
-    APP ->> M: Cache.SetObject()
-    alt Set
-        M ->> S: redis.Set()
-        M ->> L: notifyAll()
-        M ->> L2: notifyAll()
-        M -->> APP: return
-    end
-```
 
 ### Delete
 
@@ -126,25 +108,39 @@ sequenceDiagram
 
 ### API
 
+#### Production Interface
 ```go
 type Cache interface {
-    SetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, opts ...Option) error
-    
     // GetObject loader function f() will be called in case cache all miss
     // suggest to use object_type#id as key or any other pattern which can easily extract object, aggregate metric for same object in onMetric
-    GetObject(ctx context.Context, key string, obj interface{}, ttl time.Duration, f func() (interface{}, error), opts ...Option) error
+    GetObject(ctx context.Context, key string, obj any, ttl time.Duration, f func() (any, error), opts ...Option) error
     
     Delete(ctx context.Context, key string) error
-    
-    // Disable GetObject will call loader function in case cache is disabled.
-    Disable()
-    
-    // DeleteFromMem allows to delete key from mem, for test purpose
-    DeleteFromMem(key string)
-    
-    // DeleteFromRedis allows to delete key from redis, for test purpose
-    DeleteFromRedis(key string) error
+}
+```
 
+The `New()` function returns a `Cache` interface:
+
+```go
+func New(options ...Option) Cache
+```
+
+#### Testing Support
+
+For testing purposes, additional functionality is available through `NewForTesting()`:
+
+```go
+func NewForTesting(options ...Option) (*Testing, Cache)
+```
+
+The `Testing` struct provides methods to manipulate cache state for testing:
+
+```go
+type Testing struct {
+    // DeleteFromMem allows to delete key from mem, for test purpose
+    func (t *Testing) DeleteFromMem(key string)
+    // DeleteFromRedis allows to delete key from redis, for test purpose
+    func (t *Testing) DeleteFromRedis(key string) error
 }
 ```
 
@@ -162,6 +158,7 @@ func (p *TestStruct) DeepCopy() interface{} {
 
 ### Usage
 
+#### Production Usage
 ```go
 package main
 
@@ -179,7 +176,7 @@ type TestStruct struct {
 	Name string
 }
 
-// this will be called by deepcopy to improves reflect copy performance
+// this will be called by deepcopy to improve reflect copy performance
 func (p *TestStruct) DeepCopy() interface{} {
 	c := *p
 	return &c
@@ -200,11 +197,12 @@ func main() {
 		},
 	}
 
-	ehCache := cache.New(
+	// Production code uses Cache interface
+	var c cache.Cache = cache.New(
 		cache.GetConn(pool.Get),
 		cache.GetPolicy(cache.GetPolicyReturnExpired),
-		cache.UpdatePolicy(cache.UpdatePolicyNoBroadcast),
-		cache.OnMetric(func(key string, metric string, elapsedTime time.Duration) {
+		cache.Separator("#"),
+		cache.OnMetric(func(key, objectType string, metricType string, count int, elapsedTime time.Duration) {
 			// handle metric
 		}),
 		cache.OnError(func(ctx context.Context, err error) {
@@ -216,17 +214,63 @@ func main() {
 	defer cancel()
 
 	var v TestStruct
-	err := ehCache.GetObject(ctx, fmt.Sprintf("TestStruct:%d", 100), &v, time.Second*3, func() (interface{}, error) {
+	err := c.GetObject(ctx, fmt.Sprintf("TestStruct#%d", 100), &v, time.Second*3, func() (any, error) {
 		// data fetch logic to be done here
-		time.Sleep(time.Millisecond * 1200 * 1)
+		time.Sleep(time.Millisecond * 1200)
 		return &TestStruct{Name: "test"}, nil
 	})
 	log.Println(v, err)
 }
-
-
 ```
 
-### JetBrains
+#### Testing Usage
+```go
+package mypackage_test
 
-Goland is an excellent IDE, thank JetBrains for their free Open Source licenses.
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/gomodule/redigo/redis"
+	"github.com/seaguest/cache"
+)
+
+func TestCacheOperations(t *testing.T) {
+	pool := &redis.Pool{
+		MaxIdle:     10,
+		MaxActive:   50,
+		Wait:        true,
+		IdleTimeout: 240 * time.Second,
+		Dial: func() (redis.Conn, error) {
+			return redis.Dial("tcp", "127.0.0.1:6379")
+		},
+	}
+
+	// Use NewForTesting to get both testing helper and cache
+	tester, c := cache.NewForTesting(
+		cache.GetConn(pool.Get),
+		cache.Separator("#"),
+		cache.OnError(func(ctx context.Context, err error) {
+			t.Logf("Cache error: %+v", err)
+		}),
+	)
+	
+	// Clean up cache for testing
+	tester.DeleteFromRedis("test-key")
+	tester.DeleteFromMem("test-key")
+	
+	// Test cache functionality
+	var result string
+	err := c.GetObject(context.Background(), "test-key", &result, time.Minute, func() (any, error) {
+		return "test-value", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	
+	if result != "test-value" {
+		t.Errorf("Expected 'test-value', got '%s'", result)
+	}
+}
+```

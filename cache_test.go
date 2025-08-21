@@ -31,6 +31,7 @@ func (p *TestStruct) DeepCopy() interface{} {
 
 type mockCache struct {
 	ehCache    cache.Cache
+	tester     *cache.Testing
 	metricChan chan metric
 	val        *TestStruct
 	key        string
@@ -53,7 +54,7 @@ func newMockCache(key string, delay, ci time.Duration, checkMetric bool, getPoli
 		},
 	}
 	metricChan := make(chan metric, 20)
-	mock.ehCache = cache.New(
+	mock.tester, mock.ehCache = cache.NewForTesting(
 		cache.GetConn(pool.Get),
 		cache.CleanInterval(ci),
 		cache.Separator("#"),
@@ -91,8 +92,8 @@ var _ = Describe("cache test", func() {
 		Context("Test loadFunc", func() {
 			It("loadFunc succeed", func() {
 				mock := newMockCache("load_func_succeed#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromRedis(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 
 				loadFunc := func() (interface{}, error) {
 					time.Sleep(mock.delay)
@@ -131,8 +132,8 @@ var _ = Describe("cache test", func() {
 
 			It("loadFunc error", func() {
 				mock := newMockCache("load_func_error#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromRedis(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 
 				unkownErr := errors.New("unknown error")
 				loadFunc := func() (interface{}, error) {
@@ -160,8 +161,8 @@ var _ = Describe("cache test", func() {
 
 			It("loadFunc panic string", func() {
 				mock := newMockCache("load_func_panic_string#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromRedis(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 
 				panicMsg := "panic string"
 				loadFunc := func() (interface{}, error) {
@@ -190,8 +191,8 @@ var _ = Describe("cache test", func() {
 
 			It("loadFunc panic error", func() {
 				mock := newMockCache("load_func_panic_error#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromRedis(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 
 				panicErr := errors.New("panic error")
 				loadFunc := func() (interface{}, error) {
@@ -220,8 +221,8 @@ var _ = Describe("cache test", func() {
 
 			It("loadFunc timeout", func() {
 				mock := newMockCache("load_func_panic_timeout#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromRedis(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 
 				loadFunc := func() (interface{}, error) {
 					time.Sleep(mock.delay)
@@ -254,8 +255,8 @@ var _ = Describe("cache test", func() {
 		Context("Test redis hit", func() {
 			It("redis hit ok", func() {
 				mock := newMockCache("redis_hit_ok#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromRedis(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 
 				loadFunc := func() (interface{}, error) {
 					time.Sleep(mock.delay)
@@ -272,7 +273,7 @@ var _ = Describe("cache test", func() {
 
 				// make sure redis pub finished, mem get updated
 				time.Sleep(time.Millisecond * 10)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 
 				ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
 				defer cancel()
@@ -307,8 +308,8 @@ var _ = Describe("cache test", func() {
 
 		It("redis hit expired return", func() {
 			mock := newMockCache("redis_hit_expired#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReturnExpired)
-			mock.ehCache.DeleteFromRedis(mock.key)
-			mock.ehCache.DeleteFromMem(mock.key)
+			mock.tester.DeleteFromRedis(mock.key)
+			mock.tester.DeleteFromMem(mock.key)
 
 			loadFunc := func() (interface{}, error) {
 				time.Sleep(mock.delay)
@@ -325,7 +326,7 @@ var _ = Describe("cache test", func() {
 
 			// wait redis expired
 			time.Sleep(time.Millisecond * 1010)
-			mock.ehCache.DeleteFromMem(mock.key)
+			mock.tester.DeleteFromMem(mock.key)
 
 			ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
 			defer cancel()
@@ -360,8 +361,8 @@ var _ = Describe("cache test", func() {
 		Context("Test mem hit", func() {
 			It("mem hit ok", func() {
 				mock := newMockCache("mem_hit_ok#1", time.Millisecond*1200, time.Second*1, true, cache.GetPolicyReturnExpired)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromRedis(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 
 				loadFunc := func() (interface{}, error) {
 					time.Sleep(mock.delay)
@@ -407,8 +408,8 @@ var _ = Describe("cache test", func() {
 
 			It("mem hit expired return", func() {
 				mock := newMockCache("mem_hit_expired#1", time.Millisecond*1200, time.Second*5, true, cache.GetPolicyReturnExpired)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromRedis(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 
 				loadFunc := func() (interface{}, error) {
 					time.Sleep(mock.delay)
@@ -458,8 +459,8 @@ var _ = Describe("cache test", func() {
 
 			It("mem hit expired option reload", func() {
 				mock := newMockCache("mem_hit_expired#1", time.Millisecond*1200, time.Second*5, true, cache.GetPolicyReturnExpired)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromRedis(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 
 				loadFunc := func() (interface{}, error) {
 					time.Sleep(mock.delay)
@@ -510,8 +511,8 @@ var _ = Describe("cache test", func() {
 		Context("Test delete", func() {
 			It("delete ok", func() {
 				mock := newMockCache("delete_ok#1", time.Millisecond*1200, time.Second*1, true, cache.GetPolicyReturnExpired)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromRedis(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 				mock.ehCache.Delete(context.Background(), mock.key)
 
 				// wait redis-pub received
@@ -534,8 +535,8 @@ var _ = Describe("cache test", func() {
 		Context("Test hit EXPIRED with reloadOnExpiry", func() {
 			It("mem hit expired reload", func() {
 				mock := newMockCache("mem_hit_expired_reload#1", time.Millisecond*1200, time.Second*5, true, cache.GetPolicyReloadOnExpiry)
-				mock.ehCache.DeleteFromRedis(mock.key)
-				mock.ehCache.DeleteFromMem(mock.key)
+				mock.tester.DeleteFromRedis(mock.key)
+				mock.tester.DeleteFromMem(mock.key)
 
 				loadFunc := func() (interface{}, error) {
 					time.Sleep(mock.delay)
@@ -585,8 +586,8 @@ var _ = Describe("cache test", func() {
 
 		It("redis hit expired reload", func() {
 			mock := newMockCache("redis_hit_expired_reload#1", time.Millisecond*1200, time.Second, true, cache.GetPolicyReloadOnExpiry)
-			mock.ehCache.DeleteFromRedis(mock.key)
-			mock.ehCache.DeleteFromMem(mock.key)
+			mock.tester.DeleteFromRedis(mock.key)
+			mock.tester.DeleteFromMem(mock.key)
 
 			loadFunc := func() (interface{}, error) {
 				time.Sleep(mock.delay)
@@ -603,7 +604,7 @@ var _ = Describe("cache test", func() {
 
 			// wait redis expired
 			time.Sleep(time.Millisecond * 1010)
-			mock.ehCache.DeleteFromMem(mock.key)
+			mock.tester.DeleteFromMem(mock.key)
 
 			ctx, cancel = context.WithTimeout(context.Background(), time.Second*5)
 			defer cancel()
