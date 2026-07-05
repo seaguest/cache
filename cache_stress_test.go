@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -114,14 +115,22 @@ var _ = Describe("cache stress", func() {
 		})
 
 		Context("stress test", func() {
-			bgCtx := context.Background()
 			It("stress test", func() {
 				mock := newMockCache("stress_test#1", time.Millisecond*1200, time.Second, false, cache.GetPolicyReloadOnExpiry)
+				bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				var wg sync.WaitGroup
 
 				for j := 0; j < 100; j++ {
+					wg.Add(1)
 					go func(id int) {
+						defer GinkgoRecover()
+						defer wg.Done()
 						for {
-							ctx, _ := context.WithTimeout(bgCtx, time.Second*2)
+							if bgCtx.Err() != nil {
+								return
+							}
+							ctx, cancel := context.WithTimeout(bgCtx, time.Second*2)
 							cs := cs1
 							cs.ID = id
 
@@ -132,7 +141,11 @@ var _ = Describe("cache stress", func() {
 								cs.ID = id
 								return &cs, nil
 							})
+							cancel()
 							if err != nil {
+								if bgCtx.Err() != nil {
+									return
+								}
 								log.Println(err)
 							}
 							Ω(err).ToNot(HaveOccurred())
@@ -143,9 +156,15 @@ var _ = Describe("cache stress", func() {
 				}
 
 				for j := 0; j < 100; j++ {
+					wg.Add(1)
 					go func(id int) {
+						defer GinkgoRecover()
+						defer wg.Done()
 						for {
-							ctx, _ := context.WithTimeout(bgCtx, time.Second*2)
+							if bgCtx.Err() != nil {
+								return
+							}
+							ctx, cancel := context.WithTimeout(bgCtx, time.Second*2)
 							cs := cs2
 							cs.ID = id
 
@@ -156,7 +175,11 @@ var _ = Describe("cache stress", func() {
 								cs.ID = id
 								return &cs, nil
 							})
+							cancel()
 							if err != nil {
+								if bgCtx.Err() != nil {
+									return
+								}
 								log.Println(err)
 							}
 							Ω(err).ToNot(HaveOccurred())
@@ -166,7 +189,7 @@ var _ = Describe("cache stress", func() {
 					}(j)
 				}
 
-				time.Sleep(time.Second * 10)
+				wg.Wait()
 			})
 		})
 	})

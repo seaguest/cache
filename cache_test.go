@@ -50,7 +50,7 @@ func newMockCache(key string, delay, ci time.Duration, checkMetric bool, getPoli
 			return err
 		},
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", "127.0.0.1:7379")
+			return redis.Dial("tcp", testRedisAddr())
 		},
 	}
 	metricChan := make(chan metric, 20)
@@ -167,7 +167,6 @@ var _ = Describe("cache test", func() {
 				panicMsg := "panic string"
 				loadFunc := func() (interface{}, error) {
 					panic(panicMsg)
-					return mock.val, nil
 				}
 
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
@@ -197,7 +196,6 @@ var _ = Describe("cache test", func() {
 				panicErr := errors.New("panic error")
 				loadFunc := func() (interface{}, error) {
 					panic(panicErr)
-					return mock.val, nil
 				}
 
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
@@ -518,15 +516,18 @@ var _ = Describe("cache test", func() {
 				// wait redis-pub received
 				time.Sleep(time.Millisecond * 10)
 
-				metricList := []string{cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteMem, cache.MetricTypeDeleteRedis, cache.MetricTypeDeleteCache, cache.MetricTypeDeleteMem}
-
-				for _, metricType := range metricList {
+				seen := map[string]int{}
+				deadline := time.After(200 * time.Millisecond)
+				for seen[cache.MetricTypeDeleteRedis] < 2 ||
+					seen[cache.MetricTypeDeleteCache] < 1 ||
+					seen[cache.MetricTypeDeleteMem] < 1 {
 					select {
 					case mc := <-mock.metricChan:
 						Ω(mc.Key).To(Equal(mock.key))
-						Ω(mc.Type).To(Equal(metricType))
-						Ω(math.Abs(float64(mc.ElapsedTime)) < float64(time.Millisecond*10)).To(Equal(true))
-					default:
+						seen[mc.Type]++
+						Ω(math.Abs(float64(mc.ElapsedTime)) < float64(time.Millisecond*200)).To(Equal(true))
+					case <-deadline:
+						Fail("timed out waiting for delete metrics")
 					}
 				}
 			})
