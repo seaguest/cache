@@ -29,7 +29,8 @@ protection, refresh, and observability.
 - Ristretto and Otter: the default local cache should be bounded and optimized
   for contention, not a naked map.
 - BigCache and FreeCache: long-lived local cache entries should avoid object
-  pointer retention. `tiercache` stores encoded records in both tiers.
+  pointer retention. `tiercache` keeps that lesson by storing encoded records in
+  both tiers without shipping a second local-cache adapter in the core package.
 - ttlcache and go-cache: the interface should stay obvious for ordinary
   application code. A cached method should read like a normal method call with a
   loader.
@@ -115,9 +116,9 @@ Each seam has at least two adapters in the codebase before it is public.
 
 ## Defaults
 
-The default local adapter is Ristretto. BigCache is available when byte-heavy
-workloads need a GC-friendly local cache. The memory adapters exist for tests
-and deterministic benchmarks.
+The default local adapter is Ristretto. The memory adapters exist for tests and
+deterministic benchmarks. A BigCache adapter can live outside the core package if
+a deployment proves it needs that tradeoff.
 
 The default policy enables stale-while-revalidate and stale-if-error, with fast
 consistency. Strict consistency is available for reads that should re-check

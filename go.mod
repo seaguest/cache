@@ -6,7 +6,6 @@ toolchain go1.24.5
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
-	github.com/allegro/bigcache/v3 v3.1.0
 	github.com/dgraph-io/ristretto/v2 v2.4.0
 	github.com/gomodule/redigo v1.8.9
 	github.com/onsi/ginkgo/v2 v2.9.2
