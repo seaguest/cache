@@ -1,276 +1,181 @@
 # cache
 
-This is a high-performance, lightweight distributed caching solution that implements the cache-aside pattern, built upon a combination of in-memory and Redis. The cache architecture includes a singular global Redis instance and multiple in-memory instances. Data changes can be synchronized across all in-memory cache instances depending on the cache update policy.
+`cache` is a typed, read-through, two-level cache for Go method results.
 
-The library's design gives priority to data retrieval from the in-memory cache first. If the data isn't found in the local memory cache, it then resorts to the Redis cache. Should the data be unavailable in both caches, the library invokes a loader function to fetch the data, storing it in the cache for future access, thus ensuring an always-on cache.
-
-![alt text](./assets/cache.png "cache-aside pattern")
-
-## Features
-
-- **Two-level cache** : in-memory cache first, redis-backed
-- **Easy to use** : simple api with minimum configuration.
-- **Data consistency** : all in-memory instances will be notified by `Pub-Sub`
-  if any value gets deleted, other in-memory instances will update.
-- **Concurrency**: singleflight is used to avoid cache breakdown.
-- **Metrics** : provide callback function to measure the cache metrics.
-
-## Sequence diagram
-
-### cache get policy
- - GetPolicyReturnExpired: return found object even if it has expired.
- - GetPolicyReloadOnExpiry: reload object if found object has expired, then return.
-
-
-The below sequence diagrams have GetPolicyReturnExpired + UpdatePolicyBroadcast.
-
-### Reload from loader function
-
-```mermaid
-sequenceDiagram
-    participant APP as Application
-    participant M as cache
-    participant L as Local Cache
-    participant L2 as Local Cache2
-    participant S as Shared Cache
-    participant R as LoadFunc(DB)
-
-    APP ->> M: Cache.GetObject()
-    alt reload
-        M ->> R: LoadFunc
-        R -->> M: return from LoadFunc
-        M -->> APP: return
-        M ->> S: redis.Set()
-        M ->> L: notifyAll()
-        M ->> L2: notifyAll()
-    end
-```
-
-### Cache GetObject
-
-```mermaid
-sequenceDiagram
-    participant APP as Application
-    participant M as cache
-    participant L as Local Cache
-    participant L2 as Local Cache2
-    participant S as Shared Cache
-    participant R as LoadFunc(DB)
-
-    APP ->> M: Cache.GetObject()
-    alt Local Cache hit
-        M ->> L: mem.Get()
-        L -->> M: {interface{}, error}
-        M -->> APP: return
-        M -->> R: async reload if expired
-    else Local Cache miss but Shared Cache hit
-        M ->> L: mem.Get()
-        L -->> M: cache miss
-        M ->> S: redis.Get()
-        S -->> M: {interface{}, error}
-        M -->> APP: return
-        M -->> R: async reload if expired
-    else All miss
-        M ->> L: mem.Get()
-        L -->> M: cache miss
-        M ->> S: redis.Get()
-        S -->> M: cache miss
-        M ->> R: sync reload
-        R -->> M: return from reload
-        M -->> APP: return
-    end
-```
-
-
-
-### Delete
-
-```mermaid
-sequenceDiagram
-    participant APP as Application
-    participant M as cache
-    participant L as Local Cache
-    participant L2 as Local Cache2
-    participant S as Shared Cache
-
-    APP ->> M: Cache.Delete()
-    alt Delete
-        M ->> S: redis.Delete()
-        M ->> L: notifyAll()
-        M ->> L2: notifyAll()
-        M -->> APP: return
-    end
-```
-
-### Installation
-
-`go get -u github.com/seaguest/cache`
-
-### API
-
-#### Production Interface
-```go
-type Cache interface {
-    // GetObject loader function f() will be called in case cache all miss
-    // suggest to use object_type#id as key or any other pattern which can easily extract object, aggregate metric for same object in onMetric
-    GetObject(ctx context.Context, key string, obj any, ttl time.Duration, f func() (any, error), opts ...Option) error
-    
-    Delete(ctx context.Context, key string) error
-}
-```
-
-The `New()` function returns a `Cache` interface:
+One process creates one `Client`. Each cached method supplies a logical key,
+TTL, and loader. The client owns L1, Redis or another `Store`, request
+coalescing, invalidation generations, negative caching, and observability.
 
 ```go
-func New(options ...Option) Cache
-```
-
-#### Testing Support
-
-For testing purposes, additional functionality is available through `NewForTesting()`:
-
-```go
-func NewForTesting(options ...Option) (*Testing, Cache)
-```
-
-The `Testing` struct provides methods to manipulate cache state for testing:
-
-```go
-type Testing struct {
-    // DeleteFromMem allows to delete key from mem, for test purpose
-    func (t *Testing) DeleteFromMem(key string)
-    // DeleteFromRedis allows to delete key from redis, for test purpose
-    func (t *Testing) DeleteFromRedis(key string) error
-}
-```
-
-### Tips
-
-`github.com/seaguest/deepcopy`is adopted for deepcopy, returned value is deepcopied to avoid dirty data.
-please implement DeepCopy interface if you encounter deepcopy performance trouble.
-
-```go
-func (p *TestStruct) DeepCopy() interface{} {
-	c := *p
-	return &c
-}
-```
-
-### Usage
-
-#### Production Usage
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"log"
-	"time"
-
-	"github.com/gomodule/redigo/redis"
-	"github.com/seaguest/cache"
-)
-
-type TestStruct struct {
-	Name string
+store, err := cache.NewRedisStore(redisPool.Get)
+if err != nil {
+	return err
 }
 
-// this will be called by deepcopy to improve reflect copy performance
-func (p *TestStruct) DeepCopy() interface{} {
-	c := *p
-	return &c
+client, err := cache.New(cache.Config{
+	Namespace: "myapp",
+	Store:     store,
+})
+if err != nil {
+	return err
 }
+defer client.Close()
+```
 
-func main() {
-	pool := &redis.Pool{
-		MaxIdle:     1000,
-		MaxActive:   1000,
-		Wait:        true,
-		IdleTimeout: 240 * time.Second,
-		TestOnBorrow: func(c redis.Conn, t time.Time) error {
-			_, err := c.Do("PING")
-			return err
+The built-in Redis adapter targets a standalone Redis or Sentinel-managed
+primary through a redigo pool. Redis Cluster deployments should provide a
+cluster-aware `Store` that groups multi-key operations by slot.
+
+## Get
+
+```go
+func (s *UserService) Profile(ctx context.Context, userID int64) (*Profile, error) {
+	key := cache.MakeKey("UserService.Profile", userID)
+	userTag := cache.MakeTag("user", userID)
+
+	return cache.Get(ctx, s.cache, key, 5*time.Minute,
+		func(ctx context.Context) (*Profile, error) {
+			profile, err := s.repo.Profile(ctx, userID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, cache.ErrNotFound
+			}
+			return profile, err
 		},
-		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", "127.0.0.1:6379")
-		},
-	}
-
-	// Production code uses Cache interface
-	var c cache.Cache = cache.New(
-		cache.GetConn(pool.Get),
-		cache.GetPolicy(cache.GetPolicyReturnExpired),
-		cache.Separator("#"),
-		cache.OnMetric(func(key, objectType string, metricType string, count int, elapsedTime time.Duration) {
-			// handle metric
-		}),
-		cache.OnError(func(ctx context.Context, err error) {
-			// handle error
-		}),
+		cache.WithTags(userTag),
 	)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
-	defer cancel()
-
-	var v TestStruct
-	err := c.GetObject(ctx, fmt.Sprintf("TestStruct#%d", 100), &v, time.Second*3, func() (any, error) {
-		// data fetch logic to be done here
-		time.Sleep(time.Millisecond * 1200)
-		return &TestStruct{Name: "test"}, nil
-	})
-	log.Println(v, err)
 }
 ```
 
-#### Testing Usage
+`Get` checks L1, then L2, then calls the loader. Successful and not-found
+results are written back automatically. Concurrent callers for the same
+effective key share one loader execution; each waiter can still cancel its own
+request independently.
+
+The main call has five required values:
+
 ```go
-package mypackage_test
+value, err := cache.Get(ctx, client, key, ttl, loader)
+```
 
-import (
-	"context"
-	"testing"
-	"time"
+Optional behavior stays out of the normal path:
 
-	"github.com/gomodule/redigo/redis"
-	"github.com/seaguest/cache"
-)
+```go
+cache.WithTags(tags...)
+cache.WithNegativeTTL(20 * time.Second)
+cache.WithStaleWhileRevalidate(time.Minute)
+cache.WithStaleIfError(time.Minute)
+cache.WithSchema("v2")
+cache.WithConsistency(cache.Strict)
+cache.WithForceRefresh()
+cache.WithoutStore()
+```
 
-func TestCacheOperations(t *testing.T) {
-	pool := &redis.Pool{
-		MaxIdle:     10,
-		MaxActive:   50,
-		Wait:        true,
-		IdleTimeout: 240 * time.Second,
-		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", "127.0.0.1:6379")
-		},
+## Invalidation
+
+Invalidate exact results when their complete logical key is known:
+
+```go
+err := client.Invalidate(ctx, cache.MakeKey("UserService.Profile", userID))
+```
+
+Tags express dependencies. A write can invalidate every cached result that
+declared the same tag without tracking physical Redis keys:
+
+```go
+func (s *UserService) UpdateProfile(ctx context.Context, profile *Profile) error {
+	if err := s.repo.UpdateProfile(ctx, profile); err != nil {
+		return err
 	}
-
-	// Use NewForTesting to get both testing helper and cache
-	tester, c := cache.NewForTesting(
-		cache.GetConn(pool.Get),
-		cache.Separator("#"),
-		cache.OnError(func(ctx context.Context, err error) {
-			t.Logf("Cache error: %+v", err)
-		}),
-	)
-	
-	// Clean up cache for testing
-	tester.DeleteFromRedis("test-key")
-	tester.DeleteFromMem("test-key")
-	
-	// Test cache functionality
-	var result string
-	err := c.GetObject(context.Background(), "test-key", &result, time.Minute, func() (any, error) {
-		return "test-value", nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	
-	if result != "test-value" {
-		t.Errorf("Expected 'test-value', got '%s'", result)
-	}
+	return s.cache.InvalidateTags(ctx, cache.MakeTag("user", profile.UserID))
 }
 ```
+
+`Invalidate` changes one key generation. `InvalidateTags` changes dependency
+generations. `InvalidateAll` changes the namespace generation. Generations are
+durable and monotonic; Pub/Sub is only a latency optimization.
+
+Generation metadata intentionally does not expire because resetting a version
+can resurrect an older record. Capacity planning should account for the number
+of distinct keys and tags that are explicitly invalidated; prefer a bounded tag
+vocabulary for broad invalidation.
+
+## Batch loading
+
+Use `GetMany` only when the backend has a real batch operation:
+
+```go
+result, err := cache.GetMany(ctx, client, []cache.Item[int64]{
+	{ID: 1, Key: cache.MakeKey("UserService.Profile", 1), Tags: []cache.Tag{cache.MakeTag("user", 1)}},
+	{ID: 2, Key: cache.MakeKey("UserService.Profile", 2), Tags: []cache.Tag{cache.MakeTag("user", 2)}},
+}, 5*time.Minute, func(ctx context.Context, userIDs []int64) (map[int64]*Profile, error) {
+	return repo.Profiles(ctx, userIDs)
+})
+if err != nil {
+	return nil, err
+}
+```
+
+`BatchResult.Values` and `BatchResult.Errors` are indexed by business ID, not
+cache key. `BatchResult.Err()` joins per-ID errors in deterministic order.
+
+## Safety defaults
+
+- A non-empty namespace is required.
+- Cache infrastructure failures fail open by default; use `FailClosed` only
+  when cache availability is part of the business contract.
+- Stale responses are opt-in.
+- Not-found caching is opt-in through `Defaults.NegativeTTL` or the per-call
+  `WithNegativeTTL` option.
+- Logical TTLs are jittered downward by up to ten percent.
+- Value type, codec name, and optional schema are part of the physical key.
+- L1, route metadata, and local generation metadata are all bounded.
+- Encoded records are immutable, so callers cannot mutate cached objects.
+
+Use `WithSchema("v2")` when changing a type's wire-compatible meaning without
+changing its Go type. A codec's `Name` must also change when its wire format
+changes incompatibly.
+
+## Local cache
+
+The default L1 is a dependency-free, 64-shard bounded LRU with a 64 MiB budget.
+Override it when needed:
+
+```go
+cache.NewLocalCache(256 << 20)
+cache.NewNoopLocal()
+```
+
+Custom implementations can satisfy `LocalCache`. The byte slices returned by
+`Get` are immutable and must not be modified.
+
+## Observability
+
+Pass an `Observer` for metrics, tracing, or structured event recording. Event
+names and cache names are low cardinality; complete logical keys are never sent
+to the observer.
+
+```go
+stats := cache.NewStatsObserver()
+client, err := cache.New(cache.Config{
+	Namespace: "myapp",
+	Store:     store,
+	Observer:  stats,
+})
+```
+
+`MetricsObserver` adapts the event stream to a small `MetricRecorder` interface.
+This keeps Prometheus and OpenTelemetry dependencies out of the core module.
+
+## Rollout bypass
+
+Disabled mode needs no store and always executes loaders:
+
+```go
+client, err := cache.New(cache.Config{
+	Namespace: "myapp",
+	Disabled:  true,
+})
+```
+
+See [DESIGN.md](DESIGN.md) for invariants, consistency behavior, and internal
+architecture.
